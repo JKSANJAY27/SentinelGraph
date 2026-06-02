@@ -1,0 +1,119 @@
+:root {
+  /* HSL Tailored Color Palette */
+  --bg-main: hsl(222, 47%, 6%);
+  --bg-surface: hsla(223, 47%, 11%, 0.6);
+  --bg-surface-solid: hsl(223, 47%, 10%);
+  --bg-glass: rgba(13, 20, 38, 0.45);
+  --border-glass: rgba(255, 255, 255, 0.07);
+  --border-active: rgba(99, 102, 241, 0.35);
+
+  --color-primary: hsl(244, 97%, 66%);
+  --color-primary-glow: hsla(244, 97%, 66%, 0.35);
+  --color-secondary: hsl(190, 95%, 50%);
+  --color-success: hsl(142, 72%, 45%);
+  --color-error: hsl(350, 89%, 60%);
+  --color-warning: hsl(36, 100%, 55%);
+  
+  --text-main: hsl(210, 40%, 98%);
+  --text-muted: hsl(215, 20%, 65%);
+  --text-dark: hsl(217, 10%, 40%);
+
+  --font-family: 'Inter', system-ui, sans-serif;
+  --font-display: 'Outfit', sans-serif;
+  --font-mono: 'Fira Code', monospace;
+  
+  --shadow-premium: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --radius-lg: 16px;
+  --radius-md: 10px;
+  --radius-sm: 6px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-main);
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(244, 97%, 66%, 0.12) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, hsla(190, 95%, 50%, 0.08) 0px, transparent 50%);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: hsla(223, 47%, 20%, 0.8);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsla(244, 97%, 66%, 0.4);
+}
+
+/* Animations */
+@keyframes pulse-crimson {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(239, 68, 68, 0.2);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes rot-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-pulse-crimson {
+  animation: pulse-crimson 2s infinite ease-in-out;
+}
+
+.animate-float {
+  animation: float 4s infinite ease-in-out;
+}
+
+.animate-rotate {
+  animation: rot-slow 12s infinite linear;
+}
+
+/* Utility Glassmorphism Classes */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-premium);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-panel:hover {
+  border-color: var(--border-active);
+  box-shadow: 0 12px 40px 0 rgba(99, 102, 241, 0.15);
+}
