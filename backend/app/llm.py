@@ -8,7 +8,6 @@ from langchain_core.messages import BaseMessage, AIMessage
 # or local Ollama configurations, but immediately lights up when a real LLM is provided.
 class FallbackSREChatModel(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        # Flatten message content for scanning
         prompt_text = ""
         for m in messages:
             if isinstance(m.content, str):
@@ -80,13 +79,31 @@ class FallbackSREChatModel(BaseChatModel):
         return "fallback-sre-model"
 
 def get_llm() -> BaseChatModel:
-    """LLM Model Factory with auto fallback capability."""
-    provider = os.getenv("LLM_PROVIDER", "fallback")
+    """LLM Model Factory supporting Gemini Generative AI, local Ollama, and fallbacks."""
+    provider = os.getenv("LLM_PROVIDER", "fallback").lower()
     
-    if provider == "ollama":
-        model_name = os.getenv("OLLAMA_MODEL", "mistral")
+    if provider == "gemini":
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            print("[WARNING] GEMINI_API_KEY is not defined in env. Falling back to SRE stubs.")
+            return FallbackSREChatModel()
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            # Use Gemini 1.5 Flash as standard model
+            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=gemini_key)
+        except Exception as exc:
+            print(f"[ERROR] Failed to instantiate ChatGoogleGenerativeAI: {str(exc)}. Falling back.")
+            return FallbackSREChatModel()
+            
+    elif provider == "ollama":
+        # Default to llama3.2:3b since it is fast, lightweight, and installed on user's machine
+        model_name = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        return ChatOllama(model=model_name, base_url=base_url)
+        try:
+            return ChatOllama(model=model_name, base_url=base_url)
+        except Exception as exc:
+            print(f"[ERROR] Failed to connect to Ollama server: {str(exc)}. Falling back.")
+            return FallbackSREChatModel()
     
     # Defaults to our custom robust fallback SRE model
     return FallbackSREChatModel()
