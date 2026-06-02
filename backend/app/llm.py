@@ -1,7 +1,19 @@
 import os
-from langchain_community.chat_models import ChatOllama
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage
+
+# Robust imports for ChatOllama to ensure compatibility with both legacy
+# and modern LangChain v0.4 package mappings.
+try:
+    from langchain_community.chat_models.ollama import ChatOllama
+except ImportError:
+    try:
+        from langchain_community.chat_models import ChatOllama
+    except ImportError:
+        try:
+            from langchain_ollama import ChatOllama
+        except ImportError:
+            ChatOllama = None
 
 # A mock chat model that mimics LLM responses based on prompt keywords.
 # This ensures SentinelGraph runs flawlessly out-of-the-box without paid API keys
@@ -89,14 +101,15 @@ def get_llm() -> BaseChatModel:
             return FallbackSREChatModel()
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            # Use Gemini 1.5 Flash as standard model
             return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=gemini_key)
         except Exception as exc:
             print(f"[ERROR] Failed to instantiate ChatGoogleGenerativeAI: {str(exc)}. Falling back.")
             return FallbackSREChatModel()
             
     elif provider == "ollama":
-        # Default to llama3.2:3b since it is fast, lightweight, and installed on user's machine
+        if ChatOllama is None:
+            print("[ERROR] ChatOllama class could not be loaded from any import path. Falling back.")
+            return FallbackSREChatModel()
         model_name = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         try:
@@ -105,5 +118,5 @@ def get_llm() -> BaseChatModel:
             print(f"[ERROR] Failed to connect to Ollama server: {str(exc)}. Falling back.")
             return FallbackSREChatModel()
     
-    # Defaults to our custom robust fallback SRE model
+    # Defaults to our custom fallback SRE model
     return FallbackSREChatModel()
