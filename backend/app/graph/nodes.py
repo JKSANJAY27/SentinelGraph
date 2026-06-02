@@ -1,20 +1,63 @@
 import subprocess
 import time
+import asyncio
 from typing import Dict, Any, List
 from .state import IncidentState
 from ..llm import get_llm
 
 llm = get_llm()
 
-# Helper to log actions
+# Global registry of real-time SSE queues for streaming agent updates to the UI
+# incident_id -> list of asyncio.Queue
+incident_queues: Dict[str, List[asyncio.Queue]] = {}
+
+def register_queue(incident_id: str, queue: asyncio.Queue):
+    if incident_id not in incident_queues:
+        incident_queues[incident_id] = []
+    incident_queues[incident_id].append(queue)
+
+def unregister_queue(incident_id: str, queue: asyncio.Queue):
+    if incident_id in incident_queues:
+        try:
+            incident_queues[incident_id].remove(queue)
+        except ValueError:
+            pass
+
 def log_step(state: IncidentState, msg: str) -> None:
+    """Helper to log agent execution trails and notify live streaming frontend web sockets/SSE."""
     print(f"[AGENT FLOW] {msg}")
     state["execution_history"].append(msg)
+    
+    incident_id = state.get("incident_id")
+    if incident_id and incident_id in incident_queues:
+        for q in incident_queues[incident_id]:
+            try:
+                # Push details to the active event loop queue safely
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "event": "step",
+                    "message": msg,
+                    "state": {
+                        "status": state.get("status"),
+                        "service": state.get("service"),
+                        "severity": state.get("severity"),
+                        "logs": state.get("logs"),
+                        "metrics": state.get("metrics"),
+                        "deploys": state.get("deploys"),
+                        "runbooks": state.get("runbooks"),
+                        "dependencies": state.get("dependencies"),
+                        "hypotheses": state.get("hypotheses"),
+                        "recovery_plan": state.get("recovery_plan"),
+                        "postmortem": state.get("postmortem"),
+                        "execution_history": state.get("execution_history")
+                    }
+                })
+            except Exception:
+                pass
 
 def fetch_container_logs(container_name: str) -> List[str]:
     """Tries to query live logs from Docker. Falls back to empty list on failure."""
     try:
-        # Query docker logs --tail 40
         result = subprocess.run(
             ["docker", "logs", "--tail", "40", container_name],
             stdout=subprocess.PIPE,
@@ -41,7 +84,7 @@ def get_realistic_mock_logs(service: str, alertname: str) -> List[str]:
                 f"{timestamp} [ERROR] database_pool: connection acquisition timed out after 3.0s",
                 f"{timestamp} [ERROR] DatabaseSaturation: Max connection limit reached on db host."
             ]
-        else: # 5xx Spike
+        else:
             return [
                 f"{timestamp} [uvicorn.access] 172.18.0.4:50231 - POST /payments HTTP/1.1 200 OK",
                 f"{timestamp} [ERROR] payment_processor: failed to process credit transaction tx_9238472",
@@ -86,7 +129,6 @@ def supervisor_node(state: IncidentState) -> Dict[str, Any]:
 def alert_triage_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Alert Triage Agent: Actively parsing Prometheus alert payload details...")
     
-    # 1. Parse Alert Details from State
     alert_info = state["alert_payload"].get("alerts", [{}])[0]
     labels = alert_info.get("labels", {})
     annotations = alert_info.get("annotations", {})
@@ -97,7 +139,6 @@ def alert_triage_node(state: IncidentState) -> Dict[str, Any]:
     summary = annotations.get("summary", "No summary provided.")
     description = annotations.get("description", "No description provided.")
     
-    # 2. Invoke LLM to perform cognitive triage reasoning
     prompt = f"""
 You are an expert Alert Triage SRE Agent. Analyze this raw Prometheus alert payload:
 - Alert Name: {alertname}
@@ -115,7 +156,6 @@ Format your response clearly.
     response = llm.invoke(prompt)
     log_step(state, f"Alert Triage Agent - LLM Analysis:\n{response.content}")
     
-    # Update state fields
     state["service"] = service
     state["severity"] = severity
     state["status"] = "triaged"
@@ -135,17 +175,13 @@ def logs_investigator_node(state: IncidentState) -> Dict[str, Any]:
     
     log_step(state, f"Logs Investigator: Fetching server log logs for service '{service}'...")
     
-    # 1. Attempt Live Docker Container logs extraction
     logs = fetch_container_logs(service)
-    
-    # 2. Fallback to high-fidelity mock logs if container is not running
     if not logs:
         log_step(state, f"Logs Investigator: Container '{service}' not active or offline. Generating high-fidelity mock logs.")
         logs = get_realistic_mock_logs(service, alertname)
     else:
         log_step(state, f"Logs Investigator: Successfully extracted {len(logs)} live lines from Docker container.")
         
-    # 3. LLM Reasoning on Log Content
     log_dump = "\n".join(logs)
     prompt = f"""
 You are an expert SRE Log Investigator Agent. Analyze the stdout/stderr server logs for '{service}':
@@ -166,7 +202,7 @@ Format your output concisely.
     state["logs"][service] = logs
     return {"logs": state["logs"], "execution_history": state["execution_history"]}
 
-# ----------------- STUBS (Fleshed out in future steps) -----------------
+# ----------------- STUBS -----------------
 
 def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, f"Metrics Analyst: Fetching prometheus CPU/Memory trends for '{state['service']}'...")

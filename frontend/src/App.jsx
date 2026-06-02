@@ -27,7 +27,7 @@ function App() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [chaosLoading, setChaosLoading] = useState(null)
 
-  // Fetch incidents from FastAPI
+  // Fetch all incidents
   const fetchIncidents = async (selectLatest = false) => {
     setIsRefreshing(true)
     try {
@@ -38,10 +38,6 @@ function App() {
         if (data.length > 0) {
           if (selectLatest || !selectedIncident) {
             setSelectedIncident(data[0])
-          } else {
-            // Keep current selected incident updated
-            const updated = data.find(inc => inc.id === selectedIncident.id)
-            if (updated) setSelectedIncident(updated)
           }
         }
       }
@@ -52,12 +48,61 @@ function App() {
     }
   }
 
+  // Load initial list on mount
   useEffect(() => {
     fetchIncidents()
-    // Poll every 5 seconds for live agent updates
-    const timer = setInterval(() => fetchIncidents(), 5000)
-    return () => clearInterval(timer)
-  }, [selectedIncident])
+  }, [])
+
+  // Coordinated Real-Time SSE Listener for the selected active incident
+  useEffect(() => {
+    if (!selectedIncident) return
+
+    console.log(`Connecting SSE stream for: ${selectedIncident.id}`)
+    const sse = new EventSource(`${BACKEND_URL}/api/v1/incidents/${selectedIncident.id}/stream`)
+
+    sse.addEventListener('step', (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        console.log("Real-time SSE event received:", payload)
+        
+        // Dynamic state mapping
+        setSelectedIncident(prev => {
+          if (!prev || prev.id !== selectedIncident.id) return prev
+          return {
+            ...prev,
+            status: payload.state.status || prev.status,
+            state_json: payload.state
+          }
+        })
+        
+        // Also refresh list to show updated status
+        setIncidents(prevList => {
+          return prevList.map(inc => {
+            if (inc.id === selectedIncident.id) {
+              return {
+                ...inc,
+                status: payload.state.status || inc.status,
+                state_json: payload.state
+              }
+            }
+            return inc
+          })
+        })
+      } catch (err) {
+        console.error("Failed to parse SSE payload:", err)
+      }
+    })
+
+    sse.addEventListener('error', (err) => {
+      console.log("SSE Connection closed or errored, closing listener.")
+      sse.close()
+    })
+
+    return () => {
+      console.log(`Disconnecting SSE stream for: ${selectedIncident.id}`)
+      sse.close()
+    }
+  }, [selectedIncident?.id])
 
   // Triggers chaos alert webhook to backend
   const triggerChaosScenario = async (scenarioType) => {
@@ -137,7 +182,9 @@ function App() {
         body: JSON.stringify(payload)
       })
       if (response.ok) {
-        await fetchIncidents(true)
+        const newInc = await response.json()
+        setIncidents(prev => [newInc, ...prev])
+        setSelectedIncident(newInc)
       }
     } catch (err) {
       console.error("Failed to inject chaos:", err)
@@ -146,7 +193,6 @@ function App() {
     }
   }
 
-  // Parse LangGraph Execution state
   const state = selectedIncident?.state_json || {}
   const history = state.execution_history || []
   const service = selectedIncident?.service || 'N/A'
@@ -174,7 +220,7 @@ function App() {
 
   const timelineNodes = getTimelineNodes()
   const completedCount = timelineNodes.filter(n => n.status === 'completed').length
-  const progressPct = (completedCount / timelineNodes.length) * 100
+  const progressPct = timelineNodes.length > 0 ? (completedCount / timelineNodes.length) * 100 : 0
 
   return (
     <div className="app-container">
@@ -226,7 +272,9 @@ function App() {
                 <div className="card-service">Service: {inc.service}</div>
                 <div className="card-meta">
                   <span>{inc.id}</span>
-                  <span>{inc.status.toUpperCase()}</span>
+                  <span style={{ color: inc.status === 'recovered' ? 'var(--color-success)' : 'var(--color-warning)', fontWeight: '700' }}>
+                    {inc.status.toUpperCase()}
+                  </span>
                 </div>
               </div>
             ))}
@@ -238,7 +286,6 @@ function App() {
               </div>
             )}
             
-            {/* Chaos Control Dashboard inside left panel */}
             <div style={{ marginTop: 'auto', padding: '16px', borderTop: '1px solid var(--border-glass)' }}>
               <h3 style={{ fontSize: '12px', fontWeight: '700', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 Chaos Playground
@@ -378,7 +425,7 @@ function App() {
                         {state.deploys ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                             {state.deploys.map((dep, idx) => (
-                              <div key={idx} className="glass-panel" style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div key={idx} className="glass-panel" style={{ padding: '12px 16px', display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
                                 <div>
                                   <p style={{ fontSize: '13px', fontWeight: '600' }}>Version: {dep.version}</p>
                                   <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Deployed by: {dep.author} | {dep.timestamp}</p>
@@ -399,7 +446,7 @@ function App() {
                         {state.runbooks && state.runbooks.map((rb, idx) => (
                           <div key={idx} className="glass-panel" style={{ padding: '16px' }}>
                             <h4 style={{ fontSize: '13px', fontWeight: '700', marginBottom: '6px', color: 'var(--color-secondary)' }}>{rb.title}</h4>
-                            <p style={{ fontSize: '12px', lineHeight: '1.6', color: 'var(--text-muted)' }}>{rb.steps}</p>
+                            <p style={{ fontSize: '12px', lineheight: '1.6', color: 'var(--text-muted)' }}>{rb.steps}</p>
                           </div>
                         ))}
                       </div>
@@ -459,6 +506,20 @@ function App() {
                       </div>
                     </div>
                   )}
+
+                  {/* Execution Audit Trail Log */}
+                  <div style={{ marginTop: 'auto' }}>
+                    <h3 style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                      Execution Logs
+                    </h3>
+                    <div className="logs-terminal" style={{ fontSize: '10px', height: '110px', overflowY: 'auto', padding: '10px' }}>
+                      {history.map((logLine, idx) => (
+                        <div key={idx} style={{ borderBottom: 'none', color: '#8892b0', padding: '1px 0' }}>
+                          ⚡ {logLine.split('\n')[0]}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
