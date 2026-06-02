@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-const BACKEND_URL = 'http://localhost:8001';
+const BACKEND_URL = 'http://127.0.0.1:8001';
 
 function App() {
   const [incidents, setIncidents] = useState([])
