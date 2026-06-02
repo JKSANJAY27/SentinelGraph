@@ -1,5 +1,6 @@
 import time
 import os
+import threading
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
@@ -10,6 +11,16 @@ app = FastAPI(title="Order Service", version="1.0.0")
 # Service URL configuration from Env
 USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://localhost:8011")
 PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL", "http://localhost:8013")
+
+# Chaos States
+chaos_active = {
+    "memory_leak": False
+}
+
+# Global list to accumulate leaked memory
+leaked_memory_blocks = []
+leak_thread = None
+leak_lock = threading.Lock()
 
 # Prometheus Metrics
 REQUEST_COUNT = Counter(
@@ -27,6 +38,21 @@ class OrderRequest(BaseModel):
     user_id: int
     amount: float
     items: list[str]
+
+class ChaosPayload(BaseModel):
+    type: str
+
+def leak_worker():
+    """Background thread that continually allocates memory while leak is active."""
+    global leaked_memory_blocks
+    while True:
+        with leak_lock:
+            if not chaos_active["memory_leak"]:
+                break
+            # Allocate approx 10MB of data every 2 seconds
+            large_block = "X" * (10 * 1024 * 1024)
+            leaked_memory_blocks.append(large_block)
+        time.sleep(2)
 
 @app.middleware("http")
 async def monitor_requests(request, call_next):
@@ -49,7 +75,8 @@ async def monitor_requests(request, call_next):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "order-service", "version": "1.0.0"}
+    status = "error" if chaos_active["memory_leak"] else "ok"
+    return {"status": status, "service": "order-service", "version": "1.0.0", "leak_active": chaos_active["memory_leak"]}
 
 @app.post("/orders")
 async def create_order(order: OrderRequest):
@@ -94,6 +121,26 @@ async def create_order(order: OrderRequest):
         "status": "completed",
         "created_at": time.time()
     }
+
+@app.post("/chaos/inject")
+def inject_chaos(payload: ChaosPayload):
+    global leak_thread
+    if payload.type == "memory_leak":
+        with leak_lock:
+            if not chaos_active["memory_leak"]:
+                chaos_active["memory_leak"] = True
+                leak_thread = threading.Thread(target=leak_worker, daemon=True)
+                leak_thread.start()
+        return {"status": "injected", "chaos": "memory_leak"}
+    raise HTTPException(status_code=400, detail="Unsupported chaos type for order-service")
+
+@app.post("/chaos/recover")
+def recover_chaos():
+    global leaked_memory_blocks
+    with leak_lock:
+        chaos_active["memory_leak"] = False
+        leaked_memory_blocks.clear()  # Free allocated memory blocks
+    return {"status": "recovered"}
 
 @app.get("/metrics")
 def metrics():

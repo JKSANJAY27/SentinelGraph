@@ -1,10 +1,17 @@
 import time
 import random
+import threading
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 app = FastAPI(title="Payment Service", version="1.0.0")
+
+# Chaos States
+chaos_active = {
+    "db_saturation": False,
+    "cpu_spike": False
+}
 
 # Prometheus Metrics
 REQUEST_COUNT = Counter(
@@ -22,6 +29,15 @@ class PaymentRequest(BaseModel):
     user_id: int
     amount: float
     order_id: str
+
+class ChaosPayload(BaseModel):
+    type: str
+
+def busy_loop_worker(duration=1.0):
+    """Spins the CPU for a duration in a background worker."""
+    start = time.time()
+    while time.time() - start < duration:
+        _ = 9999 * 9999
 
 @app.middleware("http")
 async def monitor_requests(request, call_next):
@@ -44,16 +60,25 @@ async def monitor_requests(request, call_next):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "payment-service", "version": "1.0.0"}
+    status = "error" if (chaos_active["db_saturation"] or chaos_active["cpu_spike"]) else "ok"
+    return {"status": status, "service": "payment-service", "version": "1.0.0"}
 
 @app.post("/payments")
 def process_payment(payment: PaymentRequest):
     if payment.amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid payment amount")
     
-    # Simulate DB latency/processing delay
-    time.sleep(0.05 + random.uniform(0.01, 0.03))
-    
+    # 1. Simulate DB Saturation (High Latency)
+    if chaos_active["db_saturation"]:
+        time.sleep(2.5 + random.uniform(0.1, 0.5))
+    else:
+        time.sleep(0.05 + random.uniform(0.01, 0.03))
+        
+    # 2. Simulate CPU Spike (Busy loop)
+    if chaos_active["cpu_spike"]:
+        # Spin the CPU on request thread for 0.5s to generate high CPU metric
+        busy_loop_worker(0.5)
+        
     # Return mock payment transaction details
     tx_id = f"tx_{int(time.time())}_{random.randint(1000, 9999)}"
     return {
@@ -63,6 +88,19 @@ def process_payment(payment: PaymentRequest):
         "amount": payment.amount,
         "timestamp": time.time()
     }
+
+@app.post("/chaos/inject")
+def inject_chaos(payload: ChaosPayload):
+    if payload.type in chaos_active:
+        chaos_active[payload.type] = True
+        return {"status": "injected", "chaos": payload.type}
+    raise HTTPException(status_code=400, detail="Unsupported chaos type for payment-service")
+
+@app.post("/chaos/recover")
+def recover_chaos():
+    for k in chaos_active:
+        chaos_active[k] = False
+    return {"status": "recovered"}
 
 @app.get("/metrics")
 def metrics():

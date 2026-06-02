@@ -1,0 +1,20 @@
+groups:
+  - name: sentinel-alerts
+    rules:
+      - alert: Http5xxSpike
+        expr: sum(rate(http_requests_total{http_status="500"}[10s])) by (job) > 0.1
+        for: 2s
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx error rate on {{ $labels.job }}"
+          description: "HTTP 500 error rate is above 10% on service {{ $labels.job }}."
+
+      - alert: HighLatencySpike
+        expr: sum(rate(http_request_duration_seconds_sum[10s])) by (job) / sum(rate(http_request_duration_seconds_count[10s])) by (job) > 0.5
+        for: 2s
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected on {{ $labels.job }}"
+          description: "Average latency is above 500ms on service {{ $labels.job }}."
