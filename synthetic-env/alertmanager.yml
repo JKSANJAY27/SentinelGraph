@@ -11,5 +11,5 @@ route:
 receivers:
 - name: 'sentinelgraph-webhook'
   webhook_configs:
-  - url: 'http://host.docker.internal:8000/api/v1/alerts'
+  - url: 'http://host.docker.internal:8001/api/v1/alerts'
     send_resolved: true
