@@ -1,48 +1,172 @@
-import random
-from typing import Dict, Any
+import subprocess
+import time
+from typing import Dict, Any, List
 from .state import IncidentState
+from ..llm import get_llm
+
+llm = get_llm()
 
 # Helper to log actions
 def log_step(state: IncidentState, msg: str) -> None:
     print(f"[AGENT FLOW] {msg}")
     state["execution_history"].append(msg)
 
+def fetch_container_logs(container_name: str) -> List[str]:
+    """Tries to query live logs from Docker. Falls back to empty list on failure."""
+    try:
+        # Query docker logs --tail 40
+        result = subprocess.run(
+            ["docker", "logs", "--tail", "40", container_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3.0
+        )
+        if result.returncode == 0:
+            lines = [line.strip() for line in result.stdout.split("\n") if line.strip()]
+            return lines
+    except Exception as exc:
+        print(f"[LOG INVESTIGATOR] Failed to query Docker logs for '{container_name}': {str(exc)}")
+    return []
+
+def get_realistic_mock_logs(service: str, alertname: str) -> List[str]:
+    """Generates high-fidelity mock SRE logs matching failure scenarios."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    if "payment" in service:
+        if "Latency" in alertname or "HighLatency" in alertname:
+            return [
+                f"{timestamp} [uvicorn.access] 172.18.0.4:50231 - POST /payments HTTP/1.1 200 OK",
+                f"{timestamp} [WARNING] payment_processor: database query latency detected: 2.84s on read transaction",
+                f"{timestamp} [uvicorn.access] 172.18.0.4:50234 - POST /payments HTTP/1.1 504 Gateway Timeout",
+                f"{timestamp} [ERROR] database_pool: connection acquisition timed out after 3.0s",
+                f"{timestamp} [ERROR] DatabaseSaturation: Max connection limit reached on db host."
+            ]
+        else: # 5xx Spike
+            return [
+                f"{timestamp} [uvicorn.access] 172.18.0.4:50231 - POST /payments HTTP/1.1 200 OK",
+                f"{timestamp} [ERROR] payment_processor: failed to process credit transaction tx_9238472",
+                f"{timestamp} [ERROR] sqlite3.OperationalError: database is locked",
+                f"{timestamp} [uvicorn.access] 172.18.0.4:50239 - POST /payments HTTP/1.1 500 Internal Server Error"
+            ]
+    elif "order" in service:
+        if "memory" in alertname or "leak" in alertname or "Leak" in alertname:
+            return [
+                f"{timestamp} [INFO] order_service: processing checkout request for user 24",
+                f"{timestamp} [INFO] order_cache: allocated cached elements. Heap size: 142MB",
+                f"{timestamp} [INFO] order_cache: allocated cached elements. Heap size: 284MB",
+                f"{timestamp} [INFO] order_cache: allocated cached elements. Heap size: 568MB",
+                f"{timestamp} [WARNING] GC: garbage collection cycle completed but freed 0 bytes. Heap high."
+            ]
+        else:
+            return [
+                f"{timestamp} [uvicorn.access] 172.18.0.1:41203 - POST /orders HTTP/1.1 200 OK",
+                f"{timestamp} [ERROR] httpx.ConnectTimeout: httpx.ConnectTimeout connecting to payment-service:8013",
+                f"{timestamp} [uvicorn.access] 172.18.0.1:41208 - POST /orders HTTP/1.1 502 Bad Gateway"
+            ]
+    elif "user" in service:
+        return [
+            f"{timestamp} [INFO] user_service: loaded schema migrations v1.0.0",
+            f"{timestamp} [ERROR] config_loader: parameter 'JWT_SECRET_KEY' is missing or corrupted",
+            f"{timestamp} [ERROR] ConfigRegressionError: failed to load context variables on user initialization",
+            f"{timestamp} [uvicorn.access] 172.18.0.2:48102 - GET /users/14 HTTP/1.1 500 Internal Server Error"
+        ]
+    return [
+        f"{timestamp} [INFO] Server started successfully.",
+        f"{timestamp} [INFO] Listening on port 80",
+        f"{timestamp} [INFO] Health status: OK"
+    ]
+
+# ----------------- AGENT NODES -----------------
+
 def supervisor_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, "Supervisor: Inciting multi-agent investigation workspace.")
-    # In supervisor, we decide next nodes. For this initial setup, we transition status.
+    log_step(state, "Supervisor: Inciting multi-agent SRE investigation workspace.")
     state["status"] = "investigating"
     return {"status": "investigating", "execution_history": state["execution_history"]}
 
 def alert_triage_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, "Alert Triage: Isolating target system from alert labels.")
+    log_step(state, "Alert Triage Agent: Actively parsing Prometheus alert payload details...")
+    
+    # 1. Parse Alert Details from State
     alert_info = state["alert_payload"].get("alerts", [{}])[0]
     labels = alert_info.get("labels", {})
     annotations = alert_info.get("annotations", {})
     
-    state["service"] = labels.get("service", labels.get("job", "unknown-service"))
-    state["severity"] = labels.get("severity", "info")
+    alertname = labels.get("alertname", "UnknownAlert")
+    service = labels.get("service", labels.get("job", "unknown-service"))
+    severity = labels.get("severity", "info")
+    summary = annotations.get("summary", "No summary provided.")
+    description = annotations.get("description", "No description provided.")
+    
+    # 2. Invoke LLM to perform cognitive triage reasoning
+    prompt = f"""
+You are an expert Alert Triage SRE Agent. Analyze this raw Prometheus alert payload:
+- Alert Name: {alertname}
+- Impacted Service Label: {service}
+- Severity: {severity}
+- Summary: {summary}
+- Description: {description}
+
+Determine:
+1. The exact service name impacted.
+2. The severity rating (INFO, WARNING, CRITICAL).
+3. A concise summary of the issue.
+Format your response clearly.
+"""
+    response = llm.invoke(prompt)
+    log_step(state, f"Alert Triage Agent - LLM Analysis:\n{response.content}")
+    
+    # Update state fields
+    state["service"] = service
+    state["severity"] = severity
     state["status"] = "triaged"
     
-    log_step(state, f"Alert Triage: Mapped alert to service '{state['service']}' (Severity: {state['severity']}).")
+    log_step(state, f"Alert Triage Agent: Triage outcome finalized for service '{service}'.")
     return {
-        "service": state["service"],
-        "severity": state["severity"],
+        "service": service,
+        "severity": severity,
         "status": "triaged",
         "execution_history": state["execution_history"]
     }
 
 def logs_investigator_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, f"Logs Investigator: Fetching server log logs for service '{state['service']}'...")
-    # Gather logs (will be fully integrated in Step 1.5)
-    mock_logs = [
-        "[INFO] Server listening on port 8013",
-        "[INFO] Database connection pool established.",
-        "[WARNING] Transaction query took longer than expected: 2.1s",
-        "[ERROR] DatabaseSaturation: Max connection limit reached on db host."
-    ]
-    state["logs"][state["service"]] = mock_logs
-    log_step(state, f"Logs Investigator: Retrieved {len(mock_logs)} log events.")
+    service = state["service"]
+    alert_info = state["alert_payload"].get("alerts", [{}])[0]
+    alertname = alert_info.get("labels", {}).get("alertname", "UnknownAlert")
+    
+    log_step(state, f"Logs Investigator: Fetching server log logs for service '{service}'...")
+    
+    # 1. Attempt Live Docker Container logs extraction
+    logs = fetch_container_logs(service)
+    
+    # 2. Fallback to high-fidelity mock logs if container is not running
+    if not logs:
+        log_step(state, f"Logs Investigator: Container '{service}' not active or offline. Generating high-fidelity mock logs.")
+        logs = get_realistic_mock_logs(service, alertname)
+    else:
+        log_step(state, f"Logs Investigator: Successfully extracted {len(logs)} live lines from Docker container.")
+        
+    # 3. LLM Reasoning on Log Content
+    log_dump = "\n".join(logs)
+    prompt = f"""
+You are an expert SRE Log Investigator Agent. Analyze the stdout/stderr server logs for '{service}':
+
+```text
+{log_dump}
+```
+
+Identify:
+1. Repeating warning/error stack traces or anomalies.
+2. The key evidence log lines with citations.
+3. Your diagnosis of the immediate service failure.
+Format your output concisely.
+"""
+    response = llm.invoke(prompt)
+    log_step(state, f"Logs Investigator - LLM Analysis:\n{response.content}")
+    
+    state["logs"][service] = logs
     return {"logs": state["logs"], "execution_history": state["execution_history"]}
+
+# ----------------- STUBS (Fleshed out in future steps) -----------------
 
 def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, f"Metrics Analyst: Fetching prometheus CPU/Memory trends for '{state['service']}'...")
@@ -89,7 +213,6 @@ def dependency_graph_node(state: IncidentState) -> Dict[str, Any]:
 
 def root_cause_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Root Cause Agent: Aggregating logs, metrics, deploys, and runbooks...")
-    # Reasoning logic stub
     state["hypotheses"] = [
         {
             "rank": 1,
