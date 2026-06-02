@@ -1,6 +1,7 @@
 import os
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
 
 # Robust imports for ChatOllama to ensure compatibility with both legacy
 # and modern LangChain v0.4 package mappings.
@@ -85,7 +86,11 @@ class FallbackSREChatModel(BaseChatModel):
         else:
             response_text = "### SRE Agent Reasoning\nAgent has processed current incident state details successfully."
             
-        return AIMessage(content=response_text)
+        # Core SRE Fix: BaseChatModel._generate must return a ChatResult containing ChatGenerations,
+        # otherwise modern LangChain raises: 'AIMessage' object has no attribute 'generations'
+        message = AIMessage(content=response_text)
+        generation = ChatGeneration(message=message)
+        return ChatResult(generations=[generation])
         
     def _llm_type(self) -> str:
         return "fallback-sre-model"
