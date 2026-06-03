@@ -35,7 +35,7 @@ def log_step(state: IncidentState, msg: str) -> None:
     if incident_id and incident_id in incident_queues:
         for q in incident_queues[incident_id]:
             try:
-                loop = asyncio.get_running_loop()
+                loop = q.get_loop()
                 loop.call_soon_threadsafe(q.put_nowait, {
                     "event": "step",
                     "message": msg,
@@ -204,18 +204,13 @@ Format your output concisely.
     state["logs"][service] = logs
     return {"logs": state["logs"], "execution_history": state["execution_history"]}
 
-def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, "Deploy Detective: Querying system change logs and git deploy registries...")
-    
-    # Simulate querying a git deploy registry / release tag log
-    # In a real environment this parses git log / tags or deployment manifests
+def fetch_simulated_deploys(service: str) -> List[Dict[str, Any]]:
+    """Simulate querying a git deploy registry / release tag log."""
     simulated_deploys = [
         {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"},
         {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"}
     ]
-    
-    # Match failure state for config regression on user-service
-    if "user" in state["service"].lower():
+    if "user" in service.lower():
         simulated_deploys.append(
             {"version": "v1.1.0", "timestamp": "2026-06-02T15:35:00Z", "author": "dev-sanjay", "commit": "b02d84", "status": "failed", "details": "Injected bad parameter key regression"}
         )
@@ -223,6 +218,12 @@ def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
         simulated_deploys.append(
             {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "active"}
         )
+    return simulated_deploys
+
+def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
+    log_step(state, "Deploy Detective: Querying system change logs and git deploy registries...")
+    
+    simulated_deploys = fetch_simulated_deploys(state["service"])
         
     prompt = f"""
 You are an expert SRE Deploy Detective Agent. Review these recent deployments:

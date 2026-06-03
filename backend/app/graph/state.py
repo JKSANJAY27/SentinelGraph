@@ -1,4 +1,12 @@
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Annotated
+
+def merge_execution_history(left: List[str], right: List[str]) -> List[str]:
+    """Reducer to merge execution history lists concurrently without duplicates."""
+    merged = list(left or [])
+    for item in (right or []):
+        if item not in merged:
+            merged.append(item)
+    return merged
 
 class IncidentState(TypedDict):
     # Incident core identification
@@ -25,4 +33,4 @@ class IncidentState(TypedDict):
     approval_comments: Optional[str]
     
     # Audit trail
-    execution_history: List[str]         # Auditing/run state history log
+    execution_history: Annotated[List[str], merge_execution_history]         # Auditing/run state history log

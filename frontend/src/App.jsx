@@ -202,14 +202,14 @@ function App() {
   const getTimelineNodes = () => {
     const nodes = [
       { id: 'supervisor', label: 'Supervisor', key: 'Supervisor:' },
-      { id: 'triage', label: 'Triage', key: 'Alert Triage:' },
+      { id: 'triage', label: 'Triage', key: 'Alert Triage Agent:' },
       { id: 'logs', label: 'Logs', key: 'Logs Investigator:' },
       { id: 'metrics', label: 'Metrics', key: 'Metrics Analyst:' },
       { id: 'deploy', label: 'Deploy Detective', key: 'Deploy Detective:' },
       { id: 'docs', label: 'Runbooks', key: 'Runbook Assistant:' },
       { id: 'dependencies', label: 'Dependencies', key: 'Dependency Detective:' },
       { id: 'root_cause', label: 'Root Cause', key: 'Root Cause Agent:' },
-      { id: 'recovery', label: 'Recovery Planner', key: 'Recovery Planner:' }
+      { id: 'recovery', label: 'Recovery Planner', key: 'Recovery Planner Agent:' }
     ]
 
     return nodes.map(n => {

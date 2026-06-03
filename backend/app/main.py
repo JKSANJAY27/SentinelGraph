@@ -1,6 +1,15 @@
 import time
 import json
 import asyncio
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from backend/ or project root
+load_dotenv()
+parent_env = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+if os.path.exists(parent_env):
+    load_dotenv(parent_env)
+
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -37,8 +46,21 @@ def run_incident_graph_async(incident_id: str, initial_state: dict):
     
     db = SessionLocal()
     try:
+        # Setup Langfuse callbacks if enabled in environment
+        callbacks = []
+        if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+            try:
+                from langfuse.langchain import CallbackHandler
+                langfuse_handler = CallbackHandler(
+                    public_key=os.getenv("LANGFUSE_PUBLIC_KEY")
+                )
+                callbacks.append(langfuse_handler)
+                print("[INFO] Langfuse SRE Agent execution tracing activated.")
+            except Exception as langfuse_exc:
+                print(f"[WARN] Failed to load Langfuse CallbackHandler: {str(langfuse_exc)}")
+                
         # Run graph
-        final_state = incident_graph.invoke(initial_state)
+        final_state = incident_graph.invoke(initial_state, config={"callbacks": callbacks})
         
         # Update SQLite DB entry
         incident = db.query(Incident).filter(Incident.id == incident_id).first()
@@ -48,11 +70,39 @@ def run_incident_graph_async(incident_id: str, initial_state: dict):
             db.commit()
     except Exception as exc:
         print(f"[ERROR] LangGraph async run failed: {str(exc)}")
+        err_history = ["Error: workflow crashed", f"Details: {str(exc)}"]
+        err_state = {
+            "incident_id": incident_id,
+            "status": "error",
+            "execution_history": err_history,
+            "logs": {},
+            "metrics": {},
+            "deploys": [],
+            "dependencies": {},
+            "runbooks": [],
+            "hypotheses": [],
+            "recovery_plan": {},
+            "postmortem": None
+        }
         incident = db.query(Incident).filter(Incident.id == incident_id).first()
         if incident:
             incident.status = "error"
-            incident.state_json = {"error": str(exc), "execution_history": ["Error: workflow crashed"]}
+            incident.state_json = err_state
             db.commit()
+            
+        # Broadcast graph crash to any connected SSE listeners
+        from .graph.nodes import incident_queues
+        if incident_id in incident_queues:
+            for q in incident_queues[incident_id]:
+                try:
+                    loop = q.get_loop()
+                    loop.call_soon_threadsafe(q.put_nowait, {
+                        "event": "step",
+                        "message": f"Critical error: {str(exc)}",
+                        "state": err_state
+                    })
+                except Exception as q_exc:
+                    print(f"[WARN] Failed to enqueue error event: {str(q_exc)}")
     finally:
         db.close()
 

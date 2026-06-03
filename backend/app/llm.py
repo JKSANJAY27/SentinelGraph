@@ -1,4 +1,5 @@
 import os
+import json
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
@@ -16,9 +17,69 @@ except ImportError:
         except ImportError:
             ChatOllama = None
 
-# A mock chat model that mimics LLM responses based on prompt keywords.
-# This ensures SentinelGraph runs flawlessly out-of-the-box without paid API keys
-# or local Ollama configurations, but immediately lights up when a real LLM is provided.
+SCENARIO_DATA = {
+    "scenario_1": {
+        "hypothesis": "database connection pool saturation",
+        "rationale": "payment-service logs explicitly cite database connection pool limits reached, leading to subsequent upstream timeouts in order-service checkout routes.",
+        "action": "restart database or increase database connection limits",
+        "type": "scale_db_limits"
+    },
+    "scenario_2": {
+        "hypothesis": "cache storage buffers leak",
+        "rationale": "Order-service resident set heap size increased linearly past 512MB due to cache storage buffers leak.",
+        "action": "restart order service",
+        "type": "restart_service"
+    },
+    "scenario_3": {
+        "hypothesis": "configregressionerror failed to load context variables",
+        "rationale": "Alert started shortly after deployment of v1.1.0, throwing parameter loading errors in user profile route.",
+        "action": "rollback user-service to v1.0.9",
+        "type": "rollback_deploy"
+    },
+    "scenario_4": {
+        "hypothesis": "unbounded while loop validation bug",
+        "rationale": "Infinite while loop execution detected during checkout schema validation in payment-service.",
+        "action": "restart payment-service container",
+        "type": "restart_service"
+    },
+    "scenario_5": {
+        "hypothesis": "disk space exhausted by temporary log files",
+        "rationale": "Disk space critically low on payment-service container, IOError: No space left on device.",
+        "action": "clean up temporary files path",
+        "type": "restart_service"
+    },
+    "scenario_6": {
+        "hypothesis": "redis cache cluster connection timeout",
+        "rationale": "Failed to authenticate session checking queries due to Redis socket connection timeouts.",
+        "action": "restart redis container",
+        "type": "restart_service"
+    },
+    "scenario_7": {
+        "hypothesis": "sql deadlock transaction aborted",
+        "rationale": "Database transaction deadlock errors lock competition during simultaneous stock validation.",
+        "action": "retry order transactions",
+        "type": "restart_service"
+    },
+    "scenario_8": {
+        "hypothesis": "ssl certificate expired connecting to gateway",
+        "rationale": "Outbound API calls to stripe/paypal return handshake error cert expired.",
+        "action": "renew gateway integration certificate",
+        "type": "restart_service"
+    },
+    "scenario_9": {
+        "hypothesis": "invalid payment gateway credential authorization key error",
+        "rationale": "HTTP 403 Forbidden received from gateway provider API due to revoked or invalid keys.",
+        "action": "rotate client api credentials keys",
+        "type": "restart_service"
+    },
+    "scenario_10": {
+        "hypothesis": "alembic database migration schema table lock",
+        "rationale": "Container loops indefinitely waiting to acquire database schema lock in alembic.",
+        "action": "clear alembic migration locks or delete database migration lock entry",
+        "type": "restart_service"
+    }
+}
+
 class FallbackSREChatModel(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         prompt_text = ""
@@ -33,61 +94,72 @@ class FallbackSREChatModel(BaseChatModel):
         prompt_text_lower = prompt_text.lower()
         response_text = ""
         
-        # 1. Alert Triage routing logic
-        if "triage" in prompt_text_lower or "alert" in prompt_text_lower:
-            response_text = """### Alert Triage Analysis
-- **Impacted Service**: payment-service
-- **Severity**: CRITICAL
-- **Summary**: Detects anomalous error spike or high latency in database transactions. Initiating multi-agent log and metrics diagnostics."""
-            if "latency" in prompt_text_lower or "highlatency" in prompt_text_lower:
-                response_text = response_text.replace("payment-service", "payment-service").replace("error spike", "latency spike")
-            elif "memory" in prompt_text_lower or "leak" in prompt_text_lower:
-                response_text = response_text.replace("payment-service", "order-service").replace("error spike", "memory leak")
-            elif "deploy" in prompt_text_lower or "config" in prompt_text_lower:
-                response_text = response_text.replace("payment-service", "user-service").replace("error spike", "bad deployment")
+        # Determine active scenario
+        scenario_id = "scenario_1"  # Default fallback
+        if "memoryleak" in prompt_text_lower or "memory_leak" in prompt_text_lower or "heap size" in prompt_text_lower or "cache storage buffers leak" in prompt_text_lower:
+            scenario_id = "scenario_2"
+        elif "jwt" in prompt_text_lower or "configregressionerror" in prompt_text_lower or "jwt rollouts" in prompt_text_lower:
+            scenario_id = "scenario_3"
+        elif "cpusaturation" in prompt_text_lower or "infinite loop" in prompt_text_lower or "unbounded while loop" in prompt_text_lower or "cpu_spike" in prompt_text_lower:
+            scenario_id = "scenario_4"
+        elif "diskfull" in prompt_text_lower or "errno 28" in prompt_text_lower or "no space left" in prompt_text_lower or "disk_full" in prompt_text_lower or "disk space exhausted" in prompt_text_lower:
+            scenario_id = "scenario_5"
+        elif "dependencytimeout" in prompt_text_lower or "redis" in prompt_text_lower:
+            scenario_id = "scenario_6"
+        elif "deadlock" in prompt_text_lower or "1213" in prompt_text_lower or "deadlock found" in prompt_text_lower or "sql deadlock" in prompt_text_lower:
+            scenario_id = "scenario_7"
+        elif "ssl" in prompt_text_lower or "expired" in prompt_text_lower or "ssl certificate expired" in prompt_text_lower:
+            scenario_id = "scenario_8"
+        elif "forbidden" in prompt_text_lower or "revoked" in prompt_text_lower or "gatewayautherror" in prompt_text_lower or "403" in prompt_text_lower or "invalid payment gateway" in prompt_text_lower:
+            scenario_id = "scenario_9"
+        elif "migration lock" in prompt_text_lower or "alembic" in prompt_text_lower or "startupblocked" in prompt_text_lower or "migration" in prompt_text_lower:
+            scenario_id = "scenario_10"
 
-        # 2. Log Analysis routing logic
+        # 1. Alert Triage routing logic
+        if "triage" in prompt_text_lower or "alert details" in prompt_text_lower and "determine" in prompt_text_lower:
+            service = "payment-service"
+            if "user-service" in prompt_text_lower or "user" in prompt_text_lower:
+                service = "user-service"
+            elif "order-service" in prompt_text_lower or "order" in prompt_text_lower:
+                service = "order-service"
+            response_text = f"""### Alert Triage Analysis
+- **Impacted Service**: {service}
+- **Severity**: CRITICAL
+- **Summary**: Detects anomaly in {service}. Initiating multi-agent log and metrics diagnostics."""
+
+        # 2. JSON list hypotheses response for Root Cause Agent
+        elif "json list" in prompt_text_lower or "hypotheses" in prompt_text_lower:
+            data = SCENARIO_DATA[scenario_id]
+            response_text = json.dumps([
+                {
+                    "rank": 1,
+                    "hypothesis": data["hypothesis"],
+                    "confidence": 0.90,
+                    "rationale": data["rationale"],
+                    "evidence": "Container logs and metrics indicators"
+                }
+            ], indent=2)
+
+        # 3. JSON dictionary recovery plan response for Recovery Planner
+        elif "json dictionary" in prompt_text_lower or "recovery plan" in prompt_text_lower or "mitigation" in prompt_text_lower:
+            data = SCENARIO_DATA[scenario_id]
+            response_text = json.dumps({
+                "action": data["action"],
+                "type": data["type"],
+                "safety_level": "safe",
+                "impact": "None expected, fallback active."
+            }, indent=2)
+
+        # 4. Log Analysis routing logic
         elif "log" in prompt_text_lower or "trace" in prompt_text_lower:
             response_text = """### Log Investigation Report
 - **Identified Issues**: Found repeating warning/error stack traces in container logs.
-- **Key Evidence**:
-  * `[ERROR] DatabaseSaturation: Max connection limit reached on db host.` (in payment-service stdout logs)
-  * `[ERROR] ConfigRegressionError: failed to load context variables` (in user-service stdout logs)
-  * Memory footprint growing rapidly by 10MB blocks in order-service.
-- **Conclusion**: Logs indicate a service-level blockage or config mismatch."""
-            if "payment" in prompt_text_lower:
-                response_text = """### Log Investigation: payment-service
-- **Evidence**: live container stdout reveals active database connection timeout anomalies and pool exhaustion warnings.
-- **Key Log Line**: `[ERROR] DatabaseSaturation: Max connection limit reached on db host.`"""
-            elif "user" in prompt_text_lower:
-                response_text = """### Log Investigation: user-service
-- **Evidence**: user-service returns HTTP 500 on validation routes due to configuration parameters loading error.
-- **Key Log Line**: `[ERROR] ConfigRegressionError: failed to load context variables`"""
-            elif "order" in prompt_text_lower:
-                response_text = """### Log Investigation: order-service
-- **Evidence**: order-service background loop reveals cache storage buffers expanding without bounds.
-- **Key Log Line**: `[INFO] Allocated cached elements heap footprint expanded.`"""
+- **Key Evidence**: Logs indicate a service-level blockage or config mismatch."""
 
-        # 3. Root Cause Agent routing logic
-        elif "root cause" in prompt_text_lower or "hypotheses" in prompt_text_lower:
-            response_text = """### Root Cause Analysis Report
-1. **Hypothesis 1**: Database Connection Saturation under Load (Confidence: 90%)
-   - *Rationale*: payment-service logs explicitly cite database connection pool limits reached, leading to subsequent upstream timeouts in order-service checkout routes.
-   - *Evidence*: `[ERROR] DatabaseSaturation: Max connection limit reached on db host.`
-2. **Hypothesis 2**: Recent Bad Code Release / Configuration Rollout (Confidence: 45%)
-   - *Rationale*: A config parameter rollout occurred shortly before latency spikes began.
-   - *Evidence*: Deploy history log entry for `v1.1.0-bad`."""
-            if "user-service" in prompt_text_lower:
-                response_text = response_text.replace("Database Connection Saturation", "Injected Config Regression in v1.1.0").replace("payment-service logs", "user-service logs").replace("Max connection limit reached", "ConfigRegressionError")
-            elif "order-service" in prompt_text_lower:
-                response_text = response_text.replace("Database Connection Saturation", "Memory Leak in cache compilation loop").replace("payment-service logs", "order-service heap analysis").replace("Max connection limit reached", "Allocated cached elements heap")
-
-        # 4. Default fallback response
+        # 5. Default fallback response
         else:
             response_text = "### SRE Agent Reasoning\nAgent has processed current incident state details successfully."
             
-        # Core SRE Fix: BaseChatModel._generate must return a ChatResult containing ChatGenerations,
-        # otherwise modern LangChain raises: 'AIMessage' object has no attribute 'generations'
         message = AIMessage(content=response_text)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])

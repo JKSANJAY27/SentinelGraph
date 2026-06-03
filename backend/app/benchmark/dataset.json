@@ -1,0 +1,409 @@
+[
+  {
+    "id": "scenario_1",
+    "name": "Payment Latency Spike (DB Saturation)",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "HighLatencySpike",
+            "service": "payment-service",
+            "severity": "critical",
+            "instance": "payment-service:8013"
+          },
+          "annotations": {
+            "summary": "High HTTP checkout latency on payment-service",
+            "description": "Payment service average latency exceeded 2.5 seconds on order checkouts."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "payment-service",
+    "expected_root_cause": "database connection pool saturation",
+    "expected_recovery_action": "restart database",
+    "mock_logs": [
+      "[INFO] payment-service: processing checkouts...",
+      "[WARN] Database connection acquisition taking > 500ms",
+      "[ERROR] DatabaseSaturation: Max connection limit reached on db host.",
+      "[ERROR] http: request failed: timeout waiting for connection pool"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 92.4,
+      "memory_usage_mb": 256,
+      "http_5xx_rate": 0.05,
+      "average_latency_ms": 2840
+    },
+    "mock_deploys": [
+      {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"},
+      {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_2",
+    "name": "Order Memory Leak",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "MemoryLeakAlert",
+            "service": "order-service",
+            "severity": "warning",
+            "instance": "order-service:8012"
+          },
+          "annotations": {
+            "summary": "Linear memory leak growth detected on order-service",
+            "description": "Order-service resident set heap size increased linearly past 512MB."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "order-service",
+    "expected_root_cause": "cache storage buffers leak",
+    "expected_recovery_action": "restart order service",
+    "mock_logs": [
+      "[INFO] order-service: background cache loop running...",
+      "[INFO] Allocated cached elements heap footprint expanded.",
+      "[WARN] Memory usage has exceeded 80% threshold.",
+      "[ERROR] Process terminated with signal SIGKILL (OOM Killer)"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 58.2,
+      "memory_usage_mb": 512,
+      "http_5xx_rate": 0.02,
+      "average_latency_ms": 85
+    },
+    "mock_deploys": [
+      {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"},
+      {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_3",
+    "name": "User Service Configuration Bug Deploy",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "Http5xxSpike",
+            "service": "user-service",
+            "severity": "critical",
+            "instance": "user-service:8011"
+          },
+          "annotations": {
+            "summary": "HTTP 500 error spike detected on user-service",
+            "description": "User profile queries returning 500 errors following v1.1.0 JWT rollouts."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "user-service",
+    "expected_root_cause": "configregressionerror failed to load context variables",
+    "expected_recovery_action": "rollback user-service to v1.0.9",
+    "mock_logs": [
+      "[INFO] user-service: loading schema migrations v1.0.0",
+      "[ERROR] config_loader: parameter 'JWT_SECRET_KEY' is missing or corrupted",
+      "[ERROR] ConfigRegressionError: failed to load context variables",
+      "[INFO] 127.0.0.1: GET /api/v1/users/auth HTTP/1.1 - 500 Internal Server Error"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 28.5,
+      "memory_usage_mb": 96,
+      "http_5xx_rate": 0.38,
+      "average_latency_ms": 45
+    },
+    "mock_deploys": [
+      {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"},
+      {"version": "v1.1.0", "timestamp": "2026-06-02T15:35:00Z", "author": "dev-sanjay", "commit": "b02d84", "status": "failed", "details": "Injected bad parameter key regression"}
+    ]
+  },
+  {
+    "id": "scenario_4",
+    "name": "CPU Infinite Loop Validation Bug",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "CpuSaturationAlert",
+            "service": "payment-service",
+            "severity": "critical",
+            "instance": "payment-service:8013"
+          },
+          "annotations": {
+            "summary": "CPU utilization reached 100% on payment-service",
+            "description": "Infinite while loop execution detected during checkout schema validation."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "payment-service",
+    "expected_root_cause": "unbounded while loop validation bug",
+    "expected_recovery_action": "restart payment-service container",
+    "mock_logs": [
+      "[INFO] payment-service: validate checkout schema...",
+      "[WARN] thread validation block duration > 10s",
+      "[INFO] cpu thread handler saturated"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 100.0,
+      "memory_usage_mb": 110,
+      "http_5xx_rate": 0.15,
+      "average_latency_ms": 3200
+    },
+    "mock_deploys": [
+      {"version": "v1.1.2", "timestamp": "2026-06-03T09:00:00Z", "author": "dev-sanjay", "commit": "c4d32a", "status": "active"}
+    ]
+  },
+  {
+    "id": "scenario_5",
+    "name": "Disk Saturation / Logs Temp Full",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "DiskFullAlert",
+            "service": "payment-service",
+            "severity": "critical",
+            "instance": "payment-service:8013"
+          },
+          "annotations": {
+            "summary": "Disk space critically low on payment-service container",
+            "description": "Storage capacity exceeded on logger directory partition."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "payment-service",
+    "expected_root_cause": "disk space exhausted by temporary log files",
+    "expected_recovery_action": "clean up temporary files path",
+    "mock_logs": [
+      "[ERROR] IOError: [Errno 28] No space left on device",
+      "[ERROR] Failed to write log event chunk to /tmp/logs/app.log"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 12.0,
+      "memory_usage_mb": 64,
+      "http_5xx_rate": 0.45,
+      "average_latency_ms": 12
+    },
+    "mock_deploys": [
+      {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_6",
+    "name": "User Service Redis Timeout (Auth Check)",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "DependencyTimeout",
+            "service": "user-service",
+            "severity": "critical",
+            "instance": "user-service:8011"
+          },
+          "annotations": {
+            "summary": "Dependency Redis is unreachable from user-service",
+            "description": "Failed to authenticate session checking queries due to Redis socket connection timeouts."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "user-service",
+    "expected_root_cause": "redis cache cluster connection timeout",
+    "expected_recovery_action": "restart redis container",
+    "mock_logs": [
+      "[ERROR] redis.exceptions.ConnectionError: Connection timed out.",
+      "[WARN] Session verification fallback to database failed"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 22.1,
+      "memory_usage_mb": 90,
+      "http_5xx_rate": 0.50,
+      "average_latency_ms": 1500
+    },
+    "mock_deploys": [
+      {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "active"}
+    ]
+  },
+  {
+    "id": "scenario_7",
+    "name": "Order Database Deadlock under Checkout Load",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "DatabaseDeadlockSpike",
+            "service": "order-service",
+            "severity": "critical",
+            "instance": "order-service:8012"
+          },
+          "annotations": {
+            "summary": "Database transaction deadlock errors spiking on order-service",
+            "description": "SQL transactions aborted due to deadlock lock competition during simultaneous stock validation."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "order-service",
+    "expected_root_cause": "sql deadlock transaction aborted",
+    "expected_recovery_action": "retry order transactions",
+    "mock_logs": [
+      "[ERROR] OperationalError: (pymysql.err.OperationalError) (1213, 'Deadlock found when trying to get lock; try restarting transaction')"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 45.3,
+      "memory_usage_mb": 140,
+      "http_5xx_rate": 0.22,
+      "average_latency_ms": 320
+    },
+    "mock_deploys": [
+      {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_8",
+    "name": "Payment Gateway SSL Certificate Expired",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "GatewayConnectionFailure",
+            "service": "payment-service",
+            "severity": "critical",
+            "instance": "payment-service:8013"
+          },
+          "annotations": {
+            "summary": "SSL handshake failure connecting upstream payment gateway",
+            "description": "Outbound API calls to stripe/paypal return handshake error cert expired."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "payment-service",
+    "expected_root_cause": "ssl certificate expired connecting to gateway",
+    "expected_recovery_action": "renew gateway integration certificate",
+    "mock_logs": [
+      "[ERROR] SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate has expired"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 15.2,
+      "memory_usage_mb": 96,
+      "http_5xx_rate": 0.35,
+      "average_latency_ms": 500
+    },
+    "mock_deploys": [
+      {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_9",
+    "name": "Downstream 403 Forbidden Gateway Credentials",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "GatewayAuthError",
+            "service": "payment-service",
+            "severity": "critical",
+            "instance": "payment-service:8013"
+          },
+          "annotations": {
+            "summary": "HTTP 403 Forbidden received from gateway provider API",
+            "description": "Transactions failing verification with access denied or invalid security key."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "payment-service",
+    "expected_root_cause": "invalid payment gateway credential authorization key error",
+    "expected_recovery_action": "rotate client api credentials keys",
+    "mock_logs": [
+      "[ERROR] HTTPClientError: 403 Forbidden - ApiKey is revoked or invalid"
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 10.4,
+      "memory_usage_mb": 72,
+      "http_5xx_rate": 0.60,
+      "average_latency_ms": 115
+    },
+    "mock_deploys": [
+      {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"}
+    ]
+  },
+  {
+    "id": "scenario_10",
+    "name": "User Service DB Migration Lock",
+    "alert_payload": {
+      "receiver": "sentinelgraph-webhook",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "StartupBlocked",
+            "service": "user-service",
+            "severity": "critical",
+            "instance": "user-service:8011"
+          },
+          "annotations": {
+            "summary": "User service startup blocked waiting on db migration lock",
+            "description": "Container loops indefinitely waiting to acquire database schema lock in alembic."
+          },
+          "startsAt": "2026-06-03T12:00:00Z"
+        }
+      ]
+    },
+    "expected_service": "user-service",
+    "expected_root_cause": "alembic database migration schema table lock",
+    "expected_recovery_action": "clear alembic migration locks or delete database migration lock entry",
+    "mock_logs": [
+      "[INFO] alembic.runtime.migration: Running upgrade  -> v1.1.2",
+      "[WARN] Migration lock table active, waiting to acquire release lock..."
+    ],
+    "mock_metrics": {
+      "cpu_usage_pct": 5.0,
+      "memory_usage_mb": 60,
+      "http_5xx_rate": 1.0,
+      "average_latency_ms": 0
+    },
+    "mock_deploys": [
+      {"version": "v1.1.2", "timestamp": "2026-06-03T09:00:00Z", "author": "dev-sanjay", "commit": "c4d32a", "status": "active"}
+    ]
+  }
+]
