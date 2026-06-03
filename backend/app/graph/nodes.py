@@ -487,15 +487,79 @@ Ensure your response is ONLY the raw JSON list block so it can be parsed cleanly
     return {"hypotheses": state["hypotheses"], "execution_history": state["execution_history"]}
 
 def recovery_planner_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, "Recovery Planner: Formulating mitigation actions list...")
-    state["recovery_plan"] = {
-        "action": "Restart container & scale DB pool connection limit to 100",
-        "type": "restart_and_scale",
-        "safety_level": "safe",
-        "impact": "None expected, read-only cache handles client orders during transition"
-    }
+    log_step(state, "Recovery Planner Agent: Formulating customized mitigation actions plan...")
+    
+    service = state["service"]
+    runbooks = state["runbooks"]
+    hypotheses = state["hypotheses"]
+    
+    top_hypothesis = hypotheses[0] if hypotheses else {"hypothesis": "Unknown service failure", "rationale": "No hypothesis isolated."}
+    
+    prompt = f"""
+You are an expert SRE Recovery Planner Agent. Your goal is to review the top isolated root-cause hypothesis and the matched operational runbook steps to formulate a safe, actionable mitigation recovery plan for the failed service '{service}'.
+
+TOP DIAGNOSED HYPOTHESIS:
+- Hypothesis: {top_hypothesis.get('hypothesis')}
+- Rationale: {top_hypothesis.get('rationale')}
+
+EXTRACTED RUNBOOK GUIDELINES:
+{runbooks}
+
+Determine:
+1. The exact step-by-step action list to safely resolve the issue (e.g. restart container, scale connections limit, rollback config release, clear cache pool).
+2. The mitigation action type (e.g. 'restart_service', 'rollback_deploy', 'scale_db_limits', 'clear_cache').
+3. A safety level rating ('safe' - zero traffic risk, 'moderate' - minor impact possibility, 'risky' - potential read disruption).
+4. The expected impact on active client requests.
+
+Be extremely precise. Recommend safe actions. Avoid destructive commands.
+Format your output exactly as a JSON dictionary matching this structure:
+{{
+  "action": "Description of exact mitigation steps here",
+  "type": "restart_service" | "rollback_deploy" | "scale_db_limits" | "clear_cache",
+  "safety_level": "safe" | "moderate" | "risky",
+  "impact": "Description of expected impact on users during mitigation..."
+}}
+Ensure your response is ONLY the raw JSON dictionary block.
+"""
+    response = llm.invoke(prompt)
+    content = response.content.strip()
+    
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1]) if lines[-1].startswith("```") else "\n".join(lines[1:])
+        content = content.strip()
+        
+    try:
+        plan = json.loads(content)
+        state["recovery_plan"] = plan
+        log_step(state, f"Recovery Planner Agent: Successfully formulated dynamic plan: '{plan['action']}'.")
+    except Exception as exc:
+        print(f"[RECOVERY PLANNER] Failed to parse LLM JSON response: {content}. Error: {str(exc)}")
+        log_step(state, "[RECOVERY PLANNER] Failed to parse LLM response. Falling back to default runbook guidelines.")
+        
+        if "payment" in service:
+            state["recovery_plan"] = {
+                "action": "Scale database connections limit to 100 and restart payment-service container.",
+                "type": "scale_db_limits",
+                "safety_level": "safe",
+                "impact": "None expected, read-only cache handles client checkout queries during connection resize."
+            }
+        elif "order" in service:
+            state["recovery_plan"] = {
+                "action": "Clear accumulating cached dictionary memory blocks and restart order-service.",
+                "type": "clear_cache",
+                "safety_level": "safe",
+                "impact": "None expected, clients can re-verify orders from database queries."
+            }
+        else:
+            state["recovery_plan"] = {
+                "action": "Roll back recent user-service build version v1.1.0 to stable release v1.0.9.",
+                "type": "rollback_deploy",
+                "safety_level": "moderate",
+                "impact": "Minor 2-second token validation delay during container checkout rotation."
+            }
+            
     state["status"] = "recovery_pending"
-    log_step(state, f"Recovery Planner: Recommended action plan: '{state['recovery_plan']['action']}'.")
     return {
         "recovery_plan": state["recovery_plan"], 
         "status": "recovery_pending", 
