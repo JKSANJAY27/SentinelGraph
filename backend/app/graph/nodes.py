@@ -1,5 +1,6 @@
 import subprocess
 import time
+import os
 import asyncio
 from typing import Dict, Any, List
 from .state import IncidentState
@@ -32,7 +33,6 @@ def log_step(state: IncidentState, msg: str) -> None:
     if incident_id and incident_id in incident_queues:
         for q in incident_queues[incident_id]:
             try:
-                # Push details to the active event loop queue safely
                 loop = asyncio.get_running_loop()
                 loop.call_soon_threadsafe(q.put_nowait, {
                     "event": "step",
@@ -202,7 +202,80 @@ Format your output concisely.
     state["logs"][service] = logs
     return {"logs": state["logs"], "execution_history": state["execution_history"]}
 
-# ----------------- STUBS -----------------
+def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
+    log_step(state, "Deploy Detective: Querying system change logs and git deploy registries...")
+    
+    # Simulate querying a git deploy registry / release tag log
+    # In a real environment this parses git log / tags or deployment manifests
+    simulated_deploys = [
+        {"version": "v1.0.8", "timestamp": "2026-06-02T10:00:00Z", "author": "dev-sanjay", "commit": "a82f31", "status": "stable"},
+        {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "stable"}
+    ]
+    
+    # Match failure state for config regression on user-service
+    if "user" in state["service"].lower():
+        simulated_deploys.append(
+            {"version": "v1.1.0", "timestamp": "2026-06-02T15:35:00Z", "author": "dev-sanjay", "commit": "b02d84", "status": "failed", "details": "Injected bad parameter key regression"}
+        )
+    else:
+        simulated_deploys.append(
+            {"version": "v1.0.9", "timestamp": "2026-06-02T14:10:00Z", "author": "DeployBot", "commit": "f938d2", "status": "active"}
+        )
+        
+    prompt = f"""
+You are an expert SRE Deploy Detective Agent. Review these recent deployments:
+{simulated_deploys}
+
+Assess if any recent deployment could explain an alert on service '{state['service']}'.
+Summarize your assessment and identify if a rollback is recommended.
+"""
+    response = llm.invoke(prompt)
+    log_step(state, f"Deploy Detective - LLM Analysis:\n{response.content}")
+    
+    state["deploys"] = simulated_deploys
+    return {"deploys": state["deploys"], "execution_history": state["execution_history"]}
+
+def runbook_docs_node(state: IncidentState) -> Dict[str, Any]:
+    service = state["service"]
+    log_step(state, f"Runbook Assistant: Searching matching runbooks under backend/runbooks/ directory for service '{service}'...")
+    
+    runbooks = []
+    # Search local filesystem for service specific runbook
+    runbook_path = os.path.join(os.path.dirname(__file__), "..", "runbooks", f"{service}.md")
+    
+    if os.path.exists(runbook_path):
+        try:
+            with open(runbook_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                runbooks.append({
+                    "title": f"{service} Runbook Document",
+                    "steps": content
+                })
+                log_step(state, f"Runbook Assistant: Located and loaded matching runbook: {service}.md")
+        except Exception as exc:
+            log_step(state, f"Runbook Assistant: Error loading runbook file: {str(exc)}")
+            
+    # Fallback/Default runbook if none exists on disk
+    if not runbooks:
+        log_step(state, "Runbook Assistant: No matching runbook on disk. Fetching default SRE troubleshooting guidelines.")
+        runbooks.append({
+            "title": "Default SRE Outage Runbook",
+            "steps": "1. Verify network interfaces. 2. Fetch resource metrics. 3. Check upstream and downstream service dependencies."
+        })
+        
+    prompt = f"""
+You are an expert SRE Runbook Assistant. Review the extracted runbooks for service '{service}':
+{runbooks}
+
+Summarize the appropriate action items and verification procedures matching this failure profile.
+"""
+    response = llm.invoke(prompt)
+    log_step(state, f"Runbook Assistant - LLM Analysis:\n{response.content}")
+    
+    state["runbooks"] = runbooks
+    return {"runbooks": state["runbooks"], "execution_history": state["execution_history"]}
+
+# ----------------- STUBS (Fleshed out in future steps) -----------------
 
 def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, f"Metrics Analyst: Fetching prometheus CPU/Memory trends for '{state['service']}'...")
@@ -214,26 +287,6 @@ def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
     }
     log_step(state, "Metrics Analyst: Gained performance data spikes.")
     return {"metrics": state["metrics"], "execution_history": state["execution_history"]}
-
-def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, "Deploy Detective: Inspecting change registry logs...")
-    state["deploys"] = [
-        {"version": "1.0.0", "timestamp": "2026-06-02T15:00:00Z", "author": "DeployBot", "status": "active"},
-        {"version": "1.1.0-bad", "timestamp": "2026-06-02T15:35:00Z", "author": "dev-sanjay", "status": "failed"}
-    ]
-    log_step(state, f"Deploy Detective: Found {len(state['deploys'])} recent deployments.")
-    return {"deploys": state["deploys"], "execution_history": state["execution_history"]}
-
-def runbook_docs_node(state: IncidentState) -> Dict[str, Any]:
-    log_step(state, f"Runbook Assistant: Scanning static knowledge base documents for service '{state['service']}'...")
-    state["runbooks"] = [
-        {
-            "title": "Payment Service Outage Recovery",
-            "steps": "1. Check DB connections. 2. Scale connections list. 3. Restart payment service container if latency is high."
-        }
-    ]
-    log_step(state, "Runbook Assistant: Extracted 1 matching runbook document.")
-    return {"runbooks": state["runbooks"], "execution_history": state["execution_history"]}
 
 def dependency_graph_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Dependency Detective: Computing service dependency topology...")
