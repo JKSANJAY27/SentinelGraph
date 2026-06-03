@@ -26,6 +26,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('logs')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [chaosLoading, setChaosLoading] = useState(null)
+  const [selectedTopologyNode, setSelectedTopologyNode] = useState(null)
 
   // Fetch all incidents
   const fetchIncidents = async (selectLatest = false) => {
@@ -454,10 +455,155 @@ function App() {
 
                     {activeTab === 'dependencies' && (
                       <div>
-                        <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>Platform Topology Edge Nodes</h3>
+                        <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>Coordinated Platform Topology Map</h3>
                         {state.dependencies ? (
-                          <div className="logs-terminal" style={{ fontSize: '11px' }}>
-                            <pre>{JSON.stringify(state.dependencies, null, 2)}</pre>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <div className="glass-panel" style={{ padding: '16px', background: 'rgba(9, 13, 22, 0.65)', overflow: 'hidden' }}>
+                              <svg width="100%" height="280" style={{ overflow: 'visible' }}>
+                                <defs>
+                                  {/* Arrow Markers */}
+                                  <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                    <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.25)" />
+                                  </marker>
+                                  <marker id="arrow-error" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-error)" />
+                                  </marker>
+                                  
+                                  {/* Glow Filters */}
+                                  <filter id="glow-green-filter" x="-20%" y="-20%" width="140%" height="140%">
+                                    <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
+                                    <feMerge>
+                                      <feMergeNode in="blur" />
+                                      <feMergeNode in="SourceGraphic" />
+                                    </feMerge>
+                                  </filter>
+                                  <filter id="glow-red-filter" x="-20%" y="-20%" width="140%" height="140%">
+                                    <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+                                    <feMerge>
+                                      <feMergeNode in="blur" />
+                                      <feMergeNode in="SourceGraphic" />
+                                    </feMerge>
+                                  </filter>
+                                </defs>
+
+                                {/* Connection Edges */}
+                                <g>
+                                  {/* order-service (120, 140) to user-service (450, 70) */}
+                                  <path 
+                                    d="M 120 140 L 450 70" 
+                                    stroke={state.dependencies.root_service === "user-service" ? "var(--color-error)" : "rgba(99, 102, 241, 0.4)"} 
+                                    strokeWidth={state.dependencies.root_service === "user-service" ? "2" : "1.5"} 
+                                    fill="none" 
+                                    markerEnd={state.dependencies.root_service === "user-service" ? "url(#arrow-error)" : "url(#arrow)"}
+                                    strokeDasharray={state.dependencies.root_service === "user-service" ? "4" : "0"}
+                                  />
+                                  <text x="260" y="90" fill="var(--text-dark)" fontSize="10" fontFamily="var(--font-mono)">HTTP/1.1</text>
+
+                                  {/* order-service (120, 140) to payment-service (450, 210) */}
+                                  <path 
+                                    d="M 120 140 L 450 210" 
+                                    stroke={state.dependencies.root_service === "payment-service" ? "var(--color-error)" : "rgba(99, 102, 241, 0.4)"} 
+                                    strokeWidth={state.dependencies.root_service === "payment-service" ? "2" : "1.5"} 
+                                    fill="none" 
+                                    markerEnd={state.dependencies.root_service === "payment-service" ? "url(#arrow-error)" : "url(#arrow)"}
+                                    strokeDasharray={state.dependencies.root_service === "payment-service" ? "4" : "0"}
+                                  />
+                                  <text x="260" y="195" fill="var(--text-dark)" fontSize="10" fontFamily="var(--font-mono)">HTTP/1.1</text>
+                                </g>
+
+                                {/* Nodes Group */}
+                                <g>
+                                  {state.dependencies.nodes.map(node => {
+                                    let x = 120;
+                                    let y = 140;
+                                    if (node.id === 'user-service') { x = 450; y = 70; }
+                                    if (node.id === 'payment-service') { x = 450; y = 210; }
+
+                                    const isError = node.status === 'error';
+                                    const rectStroke = isError ? 'var(--color-error)' : 'rgba(255,255,255,0.08)';
+                                    const shadowFilter = isError ? 'url(#glow-red-filter)' : 'url(#glow-green-filter)';
+                                    const dotColor = isError ? 'var(--color-error)' : 'var(--color-success)';
+
+                                    return (
+                                      <g 
+                                        key={node.id} 
+                                        transform={`translate(${x - 90}, ${y - 25})`} 
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={() => setSelectedTopologyNode(node)}
+                                      >
+                                        {/* Background glass box */}
+                                        <rect 
+                                          width="180" 
+                                          height="50" 
+                                          rx="8" 
+                                          fill="rgba(13, 20, 38, 0.85)" 
+                                          stroke={rectStroke} 
+                                          strokeWidth="1.5"
+                                          filter={shadowFilter}
+                                        />
+                                        
+                                        {/* Status indicator dot */}
+                                        <circle 
+                                          cx="20" 
+                                          cy="25" 
+                                          r="5" 
+                                          fill={dotColor} 
+                                          className={isError ? "animate-pulse" : ""}
+                                        />
+                                        
+                                        {/* Node Texts */}
+                                        <text x="35" y="20" fill="var(--text-main)" fontSize="12" fontWeight="700" fontFamily="var(--font-display)">
+                                          {node.id}
+                                        </text>
+                                        <text x="35" y="38" fill="var(--text-muted)" fontSize="10">
+                                          {node.label}
+                                        </text>
+                                      </g>
+                                    );
+                                  })}
+                                </g>
+                              </svg>
+                            </div>
+
+                            {/* Node details selection panel */}
+                            <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.01)' }}>
+                              {selectedTopologyNode ? (
+                                <div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                    <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-secondary)' }}>
+                                      {selectedTopologyNode.id} Profile Summary
+                                    </h4>
+                                    <span className={`severity-badge ${selectedTopologyNode.status === 'error' ? 'critical' : 'warning'}`}>
+                                      {selectedTopologyNode.status.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                                    <tbody>
+                                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <td style={{ padding: '6px 0', color: 'var(--text-muted)' }}>Host Port Target</td>
+                                        <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '600', fontFamily: 'var(--font-mono)' }}>
+                                          {selectedTopologyNode.id === 'user-service' ? '8011' : selectedTopologyNode.id === 'order-service' ? '8012' : '8013'}
+                                        </td>
+                                      </tr>
+                                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <td style={{ padding: '6px 0', color: 'var(--text-muted)' }}>Service Version</td>
+                                        <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '600', fontFamily: 'var(--font-mono)' }}>v1.0.0</td>
+                                      </tr>
+                                      <tr>
+                                        <td style={{ padding: '6px 0', color: 'var(--text-muted)' }}>Health Scrape Outcome</td>
+                                        <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '600', color: selectedTopologyNode.status === 'error' ? 'var(--color-error)' : 'var(--color-success)' }}>
+                                          {selectedTopologyNode.status === 'error' ? 'Active Failure Alert Fired' : 'OK (Healthy metrics scaped)'}
+                                        </td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : (
+                                <p style={{ fontSize: '11px', color: 'var(--text-dark)', textAlign: 'center' }}>
+                                  Click any node container in the SVG architecture graph to view host config parameters.
+                                </p>
+                              )}
+                            </div>
                           </div>
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No topology calculated.</p>

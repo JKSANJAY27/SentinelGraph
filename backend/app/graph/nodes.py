@@ -290,14 +290,25 @@ def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
 
 def dependency_graph_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Dependency Detective: Computing service dependency topology...")
+    
+    nodes = [
+        {"id": "user-service", "label": "User Profile API", "status": "healthy" if "user" not in state["service"].lower() else "error"},
+        {"id": "order-service", "label": "Order Orchestrator", "status": "healthy" if "order" not in state["service"].lower() else "error"},
+        {"id": "payment-service", "label": "Payment Processor", "status": "healthy" if "payment" not in state["service"].lower() else "error"}
+    ]
+    
+    edges = [
+        {"from": "order-service", "to": "user-service", "label": "HTTP/1.1"},
+        {"from": "order-service", "to": "payment-service", "label": "HTTP/1.1"}
+    ]
+    
     state["dependencies"] = {
-        "nodes": ["user-service", "order-service", "payment-service"],
-        "edges": [
-            {"from": "order-service", "to": "user-service"},
-            {"from": "order-service", "to": "payment-service"}
-        ]
+        "nodes": nodes,
+        "edges": edges,
+        "root_service": state["service"]
     }
-    log_step(state, "Dependency Detective: Formulated architecture map.")
+    
+    log_step(state, f"Dependency Detective: Identified failed root node '{state['service']}' and mapped network edges.")
     return {"dependencies": state["dependencies"], "execution_history": state["execution_history"]}
 
 def root_cause_node(state: IncidentState) -> Dict[str, Any]:
