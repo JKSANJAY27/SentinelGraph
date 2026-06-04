@@ -20,7 +20,12 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-const BACKEND_URL = 'http://127.0.0.1:8001';
+const getBackendUrl = () => {
+  const saved = localStorage.getItem('sentinel_backend_url')
+  if (saved) return saved.trim().replace(/\/$/, "")
+  return (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8001').trim().replace(/\/$/, "")
+}
+let BACKEND_URL = getBackendUrl();
 
 function App() {
   const [incidents, setIncidents] = useState([])
@@ -31,6 +36,7 @@ function App() {
   const [selectedTopologyNode, setSelectedTopologyNode] = useState(null)
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [inputBackendUrl, setInputBackendUrl] = useState(BACKEND_URL)
   const [settingsForm, setSettingsForm] = useState({
     prometheus_url: 'http://localhost:9090',
     logs_mode: 'docker',
@@ -145,8 +151,18 @@ function App() {
   }
 
   const saveSettings = async () => {
+    let backendChanged = false;
+    let urlToUse = BACKEND_URL;
+    
+    if (inputBackendUrl.trim() && inputBackendUrl.trim() !== BACKEND_URL) {
+      const cleanUrl = inputBackendUrl.trim().replace(/\/$/, "");
+      localStorage.setItem('sentinel_backend_url', cleanUrl);
+      urlToUse = cleanUrl;
+      backendChanged = true;
+    }
+    
     try {
-      const response = await fetch(`${BACKEND_URL}/api/v1/settings`, {
+      const response = await fetch(`${urlToUse}/api/v1/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settingsForm)
@@ -154,13 +170,23 @@ function App() {
       if (response.ok) {
         const data = await response.json()
         setSettingsForm(data)
-        alert("Settings saved successfully!")
-        setIsSettingsOpen(false)
-        setTestResult({ status: '', message: '' })
+        if (backendChanged) {
+          alert("Backend URL changed and settings updated. Page will reload to connect to the new Backend URL.");
+          window.location.reload();
+        } else {
+          alert("Settings saved successfully!");
+          setIsSettingsOpen(false);
+          setTestResult({ status: '', message: '' });
+        }
       }
     } catch (err) {
       console.error("Failed to save settings:", err)
-      alert("Failed to save settings.")
+      if (backendChanged) {
+        alert(`Backend URL updated in local settings, but failed to upload integration settings to: ${urlToUse}. Page will reload to connect anyway.`);
+        window.location.reload();
+      } else {
+        alert("Failed to save settings.");
+      }
     }
   }
 
@@ -445,7 +471,7 @@ function App() {
           <button className="btn btn-secondary" onClick={() => fetchIncidents()} disabled={isRefreshing}>
             <RefreshCw className={isRefreshing ? "animate-spin" : ""} size={14} />
           </button>
-          <button className="btn btn-secondary" onClick={() => setIsSettingsOpen(true)} title="Settings & integrations config">
+          <button className="btn btn-secondary" onClick={() => { setInputBackendUrl(BACKEND_URL); setIsSettingsOpen(true); }} title="Settings & integrations config">
             <Settings size={14} />
           </button>
         </div>
@@ -1075,10 +1101,28 @@ function App() {
           <div className="modal-content settings-modal glass-panel">
             <div className="modal-header">
               <h2>⚙️ System Config & Integrations</h2>
-              <button className="close-btn" onClick={() => { setIsSettingsOpen(false); setTestResult({ status: '', message: '' }); }}>✕</button>
+              <button className="close-btn" onClick={() => { setIsSettingsOpen(false); setInputBackendUrl(BACKEND_URL); setTestResult({ status: '', message: '' }); }}>✕</button>
             </div>
             
             <div className="modal-body">
+              {/* Backend URL config */}
+              <div className="settings-section">
+                <h3>🔗 SentinelGraph Backend Service Connection</h3>
+                <div className="input-group">
+                  <label htmlFor="backend_url">SentinelGraph Backend API URL</label>
+                  <input 
+                    type="text" 
+                    id="backend_url" 
+                    value={inputBackendUrl} 
+                    onChange={(e) => setInputBackendUrl(e.target.value)}
+                    placeholder="e.g. http://127.0.0.1:8001"
+                  />
+                  <p className="helper-text" style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                    Configure the API endpoint of the SentinelGraph backend. Respects the <code>VITE_BACKEND_URL</code> environment variable as default, and persists overrides locally.
+                  </p>
+                </div>
+              </div>
+
               {/* Prometheus config */}
               <div className="settings-section">
                 <h3>📈 Metrics Telemetry (Prometheus)</h3>
@@ -1352,7 +1396,7 @@ function App() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => { setIsSettingsOpen(false); setTestResult({ status: '', message: '' }); }}>Cancel</button>
+              <button className="btn btn-secondary" onClick={() => { setIsSettingsOpen(false); setInputBackendUrl(BACKEND_URL); setTestResult({ status: '', message: '' }); }}>Cancel</button>
               <button className="btn btn-primary" onClick={saveSettings}>Save Configurations</button>
             </div>
           </div>
