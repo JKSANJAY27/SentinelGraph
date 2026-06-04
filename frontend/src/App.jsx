@@ -29,6 +29,37 @@ function App() {
   const [chaosLoading, setChaosLoading] = useState(null)
   const [selectedTopologyNode, setSelectedTopologyNode] = useState(null)
 
+  const [isReplayMode, setIsReplayMode] = useState(false)
+  const [replayStepIndex, setReplayStepIndex] = useState(0)
+  const [isReplayPlaying, setIsReplayPlaying] = useState(false)
+
+  // Reset replay state when incident changes
+  useEffect(() => {
+    setIsReplayMode(false)
+    setReplayStepIndex(0)
+    setIsReplayPlaying(false)
+  }, [selectedIncident?.id])
+
+  // Auto-play control loop
+  useEffect(() => {
+    let timer = null
+    if (isReplayPlaying && isReplayMode && selectedIncident) {
+      const snapshots = selectedIncident.state_json?.snapshots || []
+      timer = setInterval(() => {
+        setReplayStepIndex(prev => {
+          if (prev >= snapshots.length - 1) {
+            setIsReplayPlaying(false)
+            return prev
+          }
+          return prev + 1
+        })
+      }, 1500)
+    } else {
+      clearInterval(timer)
+    }
+    return () => clearInterval(timer)
+  }, [isReplayPlaying, isReplayMode, selectedIncident])
+
   // Fetch all incidents
   const fetchIncidents = async (selectLatest = false) => {
     setIsRefreshing(true)
@@ -215,9 +246,25 @@ function App() {
     }
   }
 
-  const state = selectedIncident?.state_json || {}
+  const finalState = selectedIncident?.state_json || {}
+  const snapshots = finalState.snapshots || []
+  const isReplayAvailable = snapshots.length > 0
+  
+  const state = (isReplayMode && isReplayAvailable)
+    ? (snapshots[replayStepIndex] || finalState)
+    : finalState
+    
   const history = state.execution_history || []
   const service = selectedIncident?.service || 'N/A'
+  
+  const getMetricsPath = (val, max) => {
+    const pct = Math.min(1.0, val / max)
+    const yVal = 38 - (pct * 28) // scale y-axis value from 38 down to 10
+    return {
+      path: `M0 38 Q30 32, 60 ${38 - (pct * 10)} T120 ${38 - (pct * 18)} T180 ${38 - (pct * 22)} T240 ${yVal} L240 40 L0 40 Z`,
+      stroke: `M0 38 Q30 32, 60 ${38 - (pct * 10)} T120 ${38 - (pct * 18)} T180 ${38 - (pct * 22)} T240 ${yVal}`
+    }
+  }
   
   // Timeline node logic
   const getTimelineNodes = () => {
@@ -333,7 +380,7 @@ function App() {
         {/* Right Workspace */}
         {selectedIncident ? (
           <section className="workspace-panel glass-panel">
-            <div className="incident-details-header">
+            <div className="incident-details-header" style={{ marginBottom: isReplayAvailable ? '8px' : '20px' }}>
               <div className="details-title-section">
                 <h2>{selectedIncident.alertname}</h2>
                 <div className="details-subtitle">
@@ -351,6 +398,78 @@ function App() {
                 </span>
               </div>
             </div>
+
+            {/* Playback Replay Scrubber Controller */}
+            {isReplayAvailable && (
+              <div className="replay-controller-bar glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 20px', marginBottom: '16px', background: isReplayMode ? 'rgba(99, 102, 241, 0.08)' : 'rgba(255,255,255,0.01)', border: isReplayMode ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--border-glass)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button 
+                      className={`btn ${isReplayMode ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ padding: '4px 12px', fontSize: '11px', height: '28px', textTransform: 'uppercase', letterSpacing: '0.5px' }}
+                      onClick={() => {
+                        setIsReplayMode(!isReplayMode);
+                        setIsReplayPlaying(false);
+                        setReplayStepIndex(0);
+                      }}
+                    >
+                      {isReplayMode ? "📡 Live View" : "⏪ Replay Mode"}
+                    </button>
+                    
+                    {isReplayMode && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button 
+                          className="chaos-btn" 
+                          style={{ margin: 0, padding: '4px 8px', fontSize: '11px', minWidth: '32px' }}
+                          onClick={() => setReplayStepIndex(prev => Math.max(0, prev - 1))}
+                          disabled={replayStepIndex === 0}
+                        >
+                          ⏮️
+                        </button>
+                        <button 
+                          className="chaos-btn" 
+                          style={{ margin: 0, padding: '4px 8px', fontSize: '11px', minWidth: '50px' }}
+                          onClick={() => setIsReplayPlaying(!isReplayPlaying)}
+                        >
+                          {isReplayPlaying ? "⏸️ Pause" : "▶️ Play"}
+                        </button>
+                        <button 
+                          className="chaos-btn" 
+                          style={{ margin: 0, padding: '4px 8px', fontSize: '11px', minWidth: '32px' }}
+                          onClick={() => setReplayStepIndex(prev => Math.min(snapshots.length - 1, prev + 1))}
+                          disabled={replayStepIndex === snapshots.length - 1}
+                        >
+                          ⏭️
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {isReplayMode ? `Step ${replayStepIndex + 1} of ${snapshots.length}` : `${snapshots.length} investigation phases recorded`}
+                  </span>
+                </div>
+
+                {isReplayMode && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max={snapshots.length - 1} 
+                      value={replayStepIndex} 
+                      onChange={(e) => {
+                        setReplayStepIndex(Number(e.target.value));
+                        setIsReplayPlaying(false);
+                      }}
+                      style={{ width: '100%', accentColor: 'var(--color-primary)', cursor: 'pointer', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', outline: 'none' }}
+                    />
+                    <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--color-secondary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      ⚡ {state.message || (snapshots[replayStepIndex]?.message) || "No message recorded"}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="incident-dashboard-layout">
               {/* Timeline Row */}
@@ -420,24 +539,66 @@ function App() {
                       <div>
                         <h3 style={{ fontSize: '14px', marginBottom: '14px' }}>System Performance Indicators</h3>
                         {state.metrics && state.metrics[selectedIncident.service] ? (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                            <div className="glass-panel" style={{ padding: '16px' }}>
-                              <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Average HTTP Latency</p>
-                              <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-warning)' }}>{state.metrics[selectedIncident.service].average_latency_ms} ms</p>
-                            </div>
-                            <div className="glass-panel" style={{ padding: '16px' }}>
-                              <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>CPU Saturation</p>
-                              <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-error)' }}>{state.metrics[selectedIncident.service].cpu_usage_pct} %</p>
-                            </div>
-                            <div className="glass-panel" style={{ padding: '16px' }}>
-                              <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>HTTP 5xx Rate</p>
-                              <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-error)' }}>{state.metrics[selectedIncident.service].http_5xx_rate * 100} %</p>
-                            </div>
-                            <div className="glass-panel" style={{ padding: '16px' }}>
-                              <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Memory Allocated</p>
-                              <p style={{ fontSize: '24px', fontWeight: '800' }}>{state.metrics[selectedIncident.service].memory_usage_mb} MB</p>
-                            </div>
-                          </div>
+                          (() => {
+                            const currentMetrics = state.metrics[selectedIncident.service];
+                            const latencyData = getMetricsPath(currentMetrics.average_latency_ms || 0, 3000);
+                            const cpuData = getMetricsPath(currentMetrics.cpu_usage_pct || 0, 100);
+                            const errorData = getMetricsPath((currentMetrics.http_5xx_rate || 0) * 100, 100);
+                            const memoryData = getMetricsPath(currentMetrics.memory_usage_mb || 0, 1024);
+
+                            return (
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifycontent: 'space-between' }}>
+                                  <div>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Average HTTP Latency</p>
+                                    <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-warning)' }}>{currentMetrics.average_latency_ms} ms</p>
+                                  </div>
+                                  <div style={{ marginTop: '12px', height: '40px' }}>
+                                    <svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                                      <path d={latencyData.path} fill="rgba(245, 158, 11, 0.15)" />
+                                      <path d={latencyData.stroke} stroke="var(--color-warning)" strokeWidth="1.5" fill="none" />
+                                    </svg>
+                                  </div>
+                                </div>
+                                <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifycontent: 'space-between' }}>
+                                  <div>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>CPU Saturation</p>
+                                    <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-error)' }}>{currentMetrics.cpu_usage_pct} %</p>
+                                  </div>
+                                  <div style={{ marginTop: '12px', height: '40px' }}>
+                                    <svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                                      <path d={cpuData.path} fill="rgba(239, 68, 68, 0.15)" />
+                                      <path d={cpuData.stroke} stroke="var(--color-error)" strokeWidth="1.5" fill="none" />
+                                    </svg>
+                                  </div>
+                                </div>
+                                <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifycontent: 'space-between' }}>
+                                  <div>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>HTTP 5xx Rate</p>
+                                    <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-error)' }}>{Math.round((currentMetrics.http_5xx_rate || 0) * 100)} %</p>
+                                  </div>
+                                  <div style={{ marginTop: '12px', height: '40px' }}>
+                                    <svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                                      <path d={errorData.path} fill="rgba(239, 68, 68, 0.15)" />
+                                      <path d={errorData.stroke} stroke="var(--color-error)" strokeWidth="1.5" fill="none" />
+                                    </svg>
+                                  </div>
+                                </div>
+                                <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifycontent: 'space-between' }}>
+                                  <div>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Memory Allocated</p>
+                                    <p style={{ fontSize: '24px', fontWeight: '800', color: 'var(--color-primary)' }}>{currentMetrics.memory_usage_mb} MB</p>
+                                  </div>
+                                  <div style={{ marginTop: '12px', height: '40px' }}>
+                                    <svg width="100%" height="40" viewBox="0 0 240 40" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                                      <path d={memoryData.path} fill="rgba(99, 102, 241, 0.15)" />
+                                      <path d={memoryData.stroke} stroke="var(--color-primary)" strokeWidth="1.5" fill="none" />
+                                    </svg>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No metrics loaded.</p>
                         )}
