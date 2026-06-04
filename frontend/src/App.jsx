@@ -390,6 +390,9 @@ function App() {
                     <button className={`tab-btn ${activeTab === 'dependencies' ? 'active' : ''}`} onClick={() => setActiveTab('dependencies')}>
                       <Network size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Dependencies
                     </button>
+                    <button className={`tab-btn ${activeTab === 'postmortem' ? 'active' : ''}`} onClick={() => setActiveTab('postmortem')}>
+                      <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Postmortem
+                    </button>
                   </div>
 
                   <div className="tab-content">
@@ -628,6 +631,24 @@ function App() {
                           </div>
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No topology calculated.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {activeTab === 'postmortem' && (
+                      <div>
+                        <h3 style={{ fontSize: '14px', marginBottom: '14px' }}>Automated Postmortem Summary Report</h3>
+                        {state.postmortem ? (
+                          <div className="postmortem-markdown glass-panel" style={{ padding: '20px', background: 'rgba(9, 13, 22, 0.4)', color: 'var(--text-main)', lineHeight: '1.6', overflowY: 'auto', maxHeight: '450px' }}>
+                            <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', fontSize: '13px' }}>
+                              {state.postmortem}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="glass-panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                            <Clock size={32} style={{ color: 'var(--color-warning)', marginBottom: '8px', display: 'inline-block' }} />
+                            <p style={{ fontSize: '13px' }}>Postmortem is pending. The report will generate automatically once the mitigation action is approved and the incident is recovered.</p>
+                          </div>
                         )}
                       </div>
                     )}

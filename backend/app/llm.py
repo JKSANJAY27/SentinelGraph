@@ -156,6 +156,40 @@ class FallbackSREChatModel(BaseChatModel):
 - **Identified Issues**: Found repeating warning/error stack traces in container logs.
 - **Key Evidence**: Logs indicate a service-level blockage or config mismatch."""
 
+        # 4.5 Postmortem writing logic
+        elif "postmortem" in prompt_text_lower:
+            data = SCENARIO_DATA[scenario_id]
+            response_text = f"""# SRE Incident Postmortem: {scenario_id.upper()}
+
+## Executive Summary
+On June 4th, 2026, an automated alert was triggered due to {data['hypothesis']}. The AI incident commander successfully isolated the root cause and recommended a recovery mitigation plan. Upon human verification and approval, the resolution actions were applied, restoring platform availability.
+
+## Root Cause Analysis (RCA)
+- **Primary Cause**: {data['hypothesis']}.
+- **Telemetry Evidence**: {data['rationale']}.
+- **Infrastructure Impact**: Monitored thresholds exceeded, propagating latency and error spikes downstream.
+
+## Detailed Incident Timeline
+- **T+00s** - Alert manager fires warning notification.
+- **T+05s** - Alert Triage node registers the incident and maps target service.
+- **T+15s** - Metrics and Logs analyzers fetch environment logs.
+- **T+25s** - Root Cause Analyst isolates primary hypothesis: {data['hypothesis']}.
+- **T+30s** - Recovery Planner node formulates mitigation step: {data['action']}.
+- **T+35s** - Human approval requested.
+- **T+45s** - Operator approved the action. Resuming graph.
+- **T+55s** - Service recovery verified; postmortem report completed.
+
+## Resolution & Verification
+- **Mitigation Taken**: Applied recovery type `{data['type']}` via command action: `{data['action']}`.
+- **Operator Action**: Approved.
+- **Status Outcome**: System health check returns green. Latency and HTTP 5xx errors returned to baseline.
+
+## Corrective & Preventative Action Items
+1. Improve alerting thresholds for early warning detection.
+2. Automate connection limits scaling policies under high load.
+3. Review deployment pipelines and code validation gates.
+"""
+
         # 5. Default fallback response
         else:
             response_text = "### SRE Agent Reasoning\nAgent has processed current incident state details successfully."

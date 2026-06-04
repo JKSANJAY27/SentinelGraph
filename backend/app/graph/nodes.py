@@ -569,21 +569,55 @@ Ensure your response is ONLY the raw JSON dictionary block.
 
 def postmortem_writer_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Postmortem Agent: Compiling final summary narrative...")
-    state["postmortem"] = f"""# SRE Incident Postmortem
-## Incident ID: {state['incident_id']}
-- **Service Affected**: {state['service']}
-- **Severity**: {state['severity'].upper()}
-- **Root Cause**: {state['hypotheses'][0]['hypothesis']}
-- **Mitigation Taken**: {state['recovery_plan']['action']}
+    
+    service = state["service"]
+    incident_id = state["incident_id"]
+    severity = state["severity"]
+    hypotheses = state["hypotheses"]
+    recovery_plan = state["recovery_plan"]
+    logs = state["logs"].get(service, [])
+    metrics = state["metrics"].get(service, {})
+    deploys = state["deploys"]
+    history = state["execution_history"]
+    approval_status = state.get("approval_status", "approved")
+    
+    top_hypothesis = hypotheses[0] if hypotheses else {"hypothesis": "Unknown service failure", "rationale": "No hypothesis isolated."}
+    
+    prompt = f"""
+You are the Lead SRE Postmortem Writer Agent. Your goal is to compile a detailed, professional SRE Postmortem report in Markdown format for the resolved incident '{incident_id}'.
 
-### Timeline
-- **Incident Fired**: Alert received.
-- **Root Cause Isolated**: 95% certainty connection issue.
-- **Mitigation Approved**: Container scale-up action applied successfully.
+INCIDENT META:
+- Incident ID: {incident_id}
+- Affected Service: {service}
+- Severity: {severity}
+- Mitigation Status: {approval_status}
+
+GATHERED TELEMETRY & CONTEXT:
+- Top Hypothesis: {top_hypothesis.get('hypothesis')}
+- Hypothesis Rationale: {top_hypothesis.get('rationale')}
+- Mitigation Action Executed: {recovery_plan.get('action', 'N/A')}
+- Recent Logs: {logs}
+- Performance Metrics: {metrics}
+- Recent Deployments: {deploys}
+- Multi-Agent Orchestration Trail: {history}
+
+Your postmortem report MUST be structured in clean Markdown with the following section headers:
+1. `# SRE Incident Postmortem: {incident_id}`
+2. `## Executive Summary`: High-level summary of the outage, impact, and mitigation.
+3. `## Root Cause Analysis (RCA)`: In-depth explanation of the root cause, citing exact evidence from the logs, metrics, or deployments.
+4. `## Detailed Incident Timeline`: Formatted bulleted chronological list showing the progression of events, from alert firing, triage, agents analysis, human gate approval, to recovery.
+5. `## Resolution & Verification`: Detailed explanation of the recovery action, operator decision, and proof of recovery.
+6. `## Corrective & Preventative Action Items`: Action items to prevent recurrence.
+
+Do not guess or hallucinate details that are not supported by the telemetry. Keep the tone professional, objective, and blameless. Return ONLY the markdown document content.
 """
+    response = llm.invoke(prompt)
+    postmortem = response.content.strip()
+    
+    state["postmortem"] = postmortem
     state["status"] = "recovered"
     log_step(state, "Postmortem Agent: Postmortem report rendered successfully.")
-    return {"postmortem": state["postmortem"], "status": "recovered", "execution_history": state["execution_history"]}
+    return {"postmortem": postmortem, "status": "recovered", "execution_history": state["execution_history"]}
 
 def memory_curator_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Memory Curator: Storing lessons-learned in long-term memory...")
