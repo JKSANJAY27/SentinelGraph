@@ -231,7 +231,8 @@ def get_llm() -> BaseChatModel:
             return FallbackSREChatModel()
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=gemini_key)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            return ChatGoogleGenerativeAI(model=model_name, google_api_key=gemini_key)
         except Exception as exc:
             print(f"[ERROR] Failed to instantiate ChatGoogleGenerativeAI: {str(exc)}. Falling back.")
             return FallbackSREChatModel()
