@@ -68,7 +68,8 @@ def run_evaluation():
             "postmortem": None,
             "approval_status": None,
             "approval_comments": None,
-            "execution_history": ["Supervisor: Readying incident workspace."]
+            "execution_history": ["Supervisor: Readying incident workspace."],
+            "snapshots": []
         }
 
         # Setup Langfuse callbacks if enabled in environment

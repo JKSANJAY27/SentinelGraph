@@ -8,6 +8,14 @@ def merge_execution_history(left: List[str], right: List[str]) -> List[str]:
             merged.append(item)
     return merged
 
+def merge_snapshots(left: List[Dict[str, Any]], right: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Reducer to merge snapshots list concurrently without duplicates."""
+    merged = list(left or [])
+    for item in (right or []):
+        if not any(x.get("step_index") == item.get("step_index") for x in merged):
+            merged.append(item)
+    return merged
+
 class IncidentState(TypedDict):
     # Incident core identification
     incident_id: str
@@ -34,3 +42,5 @@ class IncidentState(TypedDict):
     
     # Audit trail
     execution_history: Annotated[List[str], merge_execution_history]         # Auditing/run state history log
+    snapshots: Annotated[List[Dict[str, Any]], merge_snapshots]
+

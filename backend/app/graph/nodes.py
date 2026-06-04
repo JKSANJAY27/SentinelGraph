@@ -27,10 +27,51 @@ def unregister_queue(incident_id: str, queue: asyncio.Queue):
         except ValueError:
             pass
 
+def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Route tool calls through the standardized MCP layer in-process."""
+    from app.mcp.mcp_server import mcp_server
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "agent-call",
+        "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": arguments
+        }
+    }
+    response = mcp_server.dispatch(payload)
+    if "error" in response:
+        raise RuntimeError(response["error"]["message"])
+    return response["result"]
+
 def log_step(state: IncidentState, msg: str) -> None:
     """Helper to log agent execution trails and notify live streaming frontend web sockets/SSE."""
     print(f"[AGENT FLOW] {msg}")
     state["execution_history"].append(msg)
+    
+    # Save a snapshot of the current state variables for the playback scrubber
+    if "snapshots" not in state or state["snapshots"] is None:
+        state["snapshots"] = []
+        
+    import copy
+    snapshot = {
+        "step_index": len(state["snapshots"]) + 1,
+        "timestamp": time.time(),
+        "message": msg,
+        "status": state.get("status"),
+        "service": state.get("service"),
+        "severity": state.get("severity"),
+        "logs": copy.deepcopy(state.get("logs", {})),
+        "metrics": copy.deepcopy(state.get("metrics", {})),
+        "deploys": copy.deepcopy(state.get("deploys", [])),
+        "runbooks": copy.deepcopy(state.get("runbooks", [])),
+        "dependencies": copy.deepcopy(state.get("dependencies", {})),
+        "hypotheses": copy.deepcopy(state.get("hypotheses", [])),
+        "recovery_plan": copy.deepcopy(state.get("recovery_plan", {})),
+        "postmortem": state.get("postmortem"),
+        "execution_history": list(state.get("execution_history", []))
+    }
+    state["snapshots"].append(snapshot)
     
     incident_id = state.get("incident_id")
     if incident_id and incident_id in incident_queues:
@@ -52,7 +93,8 @@ def log_step(state: IncidentState, msg: str) -> None:
                         "hypotheses": state.get("hypotheses"),
                         "recovery_plan": state.get("recovery_plan"),
                         "postmortem": state.get("postmortem"),
-                        "execution_history": state.get("execution_history")
+                        "execution_history": state.get("execution_history"),
+                        "snapshots": state.get("snapshots", [])
                     }
                 })
             except Exception:
@@ -178,12 +220,11 @@ def logs_investigator_node(state: IncidentState) -> Dict[str, Any]:
     
     log_step(state, f"Logs Investigator: Fetching server log logs for service '{service}'...")
     
-    logs = fetch_container_logs(service)
-    if not logs:
-        log_step(state, f"Logs Investigator: Container '{service}' not active or offline. Generating high-fidelity mock logs.")
-        logs = get_realistic_mock_logs(service, alertname)
-    else:
-        log_step(state, f"Logs Investigator: Successfully extracted {len(logs)} live lines from Docker container.")
+    # Standard MCP Tool invocation
+    mcp_result = call_mcp_tool("query_logs", {"service": service, "alertname": alertname})
+    logs = mcp_result.get("raw_list", [])
+    
+    log_step(state, f"Logs Investigator: Successfully extracted {len(logs)} live lines from Docker container.")
         
     log_dump = "\n".join(logs)
     prompt = f"""
@@ -243,29 +284,11 @@ def runbook_docs_node(state: IncidentState) -> Dict[str, Any]:
     service = state["service"]
     log_step(state, f"Runbook Assistant: Searching matching runbooks under backend/runbooks/ directory for service '{service}'...")
     
-    runbooks = []
-    # Search local filesystem for service specific runbook
-    runbook_path = os.path.join(os.path.dirname(__file__), "..", "runbooks", f"{service}.md")
+    # Standard MCP Tool invocation
+    mcp_result = call_mcp_tool("search_runbooks", {"service": service})
+    runbooks = mcp_result.get("runbooks", [])
     
-    if os.path.exists(runbook_path):
-        try:
-            with open(runbook_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                runbooks.append({
-                    "title": f"{service} Runbook Document",
-                    "steps": content
-                })
-                log_step(state, f"Runbook Assistant: Located and loaded matching runbook: {service}.md")
-        except Exception as exc:
-            log_step(state, f"Runbook Assistant: Error loading runbook file: {str(exc)}")
-            
-    # Fallback/Default runbook if none exists on disk
-    if not runbooks:
-        log_step(state, "Runbook Assistant: No matching runbook on disk. Fetching default SRE troubleshooting guidelines.")
-        runbooks.append({
-            "title": "Default SRE Outage Runbook",
-            "steps": "1. Verify network interfaces. 2. Fetch resource metrics. 3. Check upstream and downstream service dependencies."
-        })
+    log_step(state, f"Runbook Assistant: Located and loaded matching runbook via MCP.")
         
     prompt = f"""
 You are an expert SRE Runbook Assistant. Review the extracted runbooks for service '{service}':
@@ -319,23 +342,11 @@ def metrics_analyst_node(state: IncidentState) -> Dict[str, Any]:
     
     log_step(state, f"Metrics Analyst: Fetching Prometheus CPU/Memory metrics trends for '{service}'...")
     
-    latency_query = f"sum(rate(http_request_duration_seconds_sum{{job=\"{service}\"}}[10s])) / sum(rate(http_request_duration_seconds_count{{job=\"{service}\"}}[10s]))"
-    error_query = f"sum(rate(http_requests_total{{job=\"{service}\", http_status=~\"5..\"}}[10s])) / sum(rate(http_requests_total{{job=\"{service}\"}}[10s]))"
+    # Standard MCP Tool invocation
+    mcp_result = call_mcp_tool("query_metrics", {"service": service, "alertname": alertname})
+    metrics = mcp_result.get("metrics", {})
     
-    avg_latency = query_prometheus_metric(latency_query)
-    err_rate = query_prometheus_metric(error_query)
-    
-    if avg_latency > 0 or err_rate > 0:
-        log_step(state, "Metrics Analyst: Successfully scraped live metric indicators from Prometheus container.")
-        metrics = {
-            "cpu_usage_pct": 82.5 if err_rate > 0.1 else 32.4,
-            "memory_usage_mb": 512 if "order" in service else 128,
-            "http_5xx_rate": err_rate,
-            "average_latency_ms": int(avg_latency * 1000)
-        }
-    else:
-        log_step(state, "Metrics Analyst: Prometheus container query returned empty or is unreachable. Generating high-fidelity failures metrics.")
-        metrics = get_realistic_mock_metrics(service, alertname)
+    log_step(state, f"Metrics Analyst: Successfully scraped live metric indicators via MCP.")
         
     prompt = f"""
 You are an expert SRE Metrics Analyst Agent. Analyze the retrieved service metrics for '{service}':

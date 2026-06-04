@@ -21,6 +21,7 @@ from .models import Incident
 from .schemas import AlertmanagerWebhook, IncidentResponse, ApprovalRequest
 from .graph.workflow import create_incident_workflow
 from .graph.nodes import register_queue, unregister_queue
+from .mcp.mcp_server import mcp_server
 
 # Initialize DB Tables
 Base.metadata.create_all(bind=engine)
@@ -111,6 +112,11 @@ def run_incident_graph_async(incident_id: str, initial_state: dict):
 def health():
     return {"status": "ok", "app": "sentinelgraph-backend"}
 
+@app.post("/api/v1/mcp")
+def mcp_endpoint(payload: dict):
+    """Router endpoint for MCP JSON-RPC 2.0 requests."""
+    return mcp_server.dispatch(payload)
+
 @app.post("/api/v1/alerts", response_model=IncidentResponse)
 def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if not webhook_data.alerts:
@@ -158,7 +164,8 @@ def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: Backgroun
         "postmortem": None,
         "approval_status": None,
         "approval_comments": None,
-        "execution_history": ["Supervisor: Readying incident workspace."]
+        "execution_history": ["Supervisor: Readying incident workspace."],
+        "snapshots": []
     }
     
     # 3. Trigger LangGraph Multi-Agent workflow in Background
@@ -226,9 +233,24 @@ def resume_incident_graph_async(incident_id: str, action: str):
         if action == "approve":
             # Add resume entry in execution history
             msg = "Human Operator: Approved mitigation plan. Resuming execution."
+            
+            service = state.get("service")
+            msg_mcp = ""
+            if service:
+                try:
+                    from app.graph.nodes import call_mcp_tool
+                    mcp_res = call_mcp_tool("restart_container", {"service": service})
+                    msg_mcp = f"Execution Agent: Standard MCP tool triggered: {mcp_res.get('content', [{}])[0].get('text', '')}"
+                except Exception as mcp_exc:
+                    msg_mcp = f"Execution Agent: Failed to trigger MCP restart container: {str(mcp_exc)}"
+                    
+            history_update = state.get("execution_history", []) + [msg]
+            if msg_mcp:
+                history_update.append(msg_mcp)
+                
             incident_graph.update_state(config, {
                 "approval_status": "approved",
-                "execution_history": state.get("execution_history", []) + [msg]
+                "execution_history": history_update
             })
             
             # Resume LangGraph by calling invoke with None input
