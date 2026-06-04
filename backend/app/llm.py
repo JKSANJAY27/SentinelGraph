@@ -116,7 +116,7 @@ class FallbackSREChatModel(BaseChatModel):
             scenario_id = "scenario_10"
 
         # 1. Alert Triage routing logic
-        if "triage" in prompt_text_lower or "alert details" in prompt_text_lower and "determine" in prompt_text_lower:
+        if "analyze this raw prometheus alert payload" in prompt_text_lower:
             service = "payment-service"
             if "user-service" in prompt_text_lower or "user" in prompt_text_lower:
                 service = "user-service"
@@ -128,7 +128,7 @@ class FallbackSREChatModel(BaseChatModel):
 - **Summary**: Detects anomaly in {service}. Initiating multi-agent log and metrics diagnostics."""
 
         # 2. JSON list hypotheses response for Root Cause Agent
-        elif "json list" in prompt_text_lower or "hypotheses" in prompt_text_lower:
+        elif "formulate the top 3 root-cause hypotheses" in prompt_text_lower:
             data = SCENARIO_DATA[scenario_id]
             response_text = json.dumps([
                 {
@@ -141,7 +141,7 @@ class FallbackSREChatModel(BaseChatModel):
             ], indent=2)
 
         # 3. JSON dictionary recovery plan response for Recovery Planner
-        elif "json dictionary" in prompt_text_lower or "recovery plan" in prompt_text_lower or "mitigation" in prompt_text_lower:
+        elif "formulate a safe, actionable mitigation recovery plan" in prompt_text_lower:
             data = SCENARIO_DATA[scenario_id]
             response_text = json.dumps({
                 "action": data["action"],
@@ -151,13 +151,13 @@ class FallbackSREChatModel(BaseChatModel):
             }, indent=2)
 
         # 4. Log Analysis routing logic
-        elif "log" in prompt_text_lower or "trace" in prompt_text_lower:
+        elif "analyze the stdout/stderr server logs for" in prompt_text_lower:
             response_text = """### Log Investigation Report
 - **Identified Issues**: Found repeating warning/error stack traces in container logs.
 - **Key Evidence**: Logs indicate a service-level blockage or config mismatch."""
 
         # 4.5 Postmortem writing logic
-        elif "postmortem" in prompt_text_lower:
+        elif "compile a detailed, professional sre postmortem report" in prompt_text_lower:
             data = SCENARIO_DATA[scenario_id]
             response_text = f"""# SRE Incident Postmortem: {scenario_id.upper()}
 
@@ -189,6 +189,25 @@ On June 4th, 2026, an automated alert was triggered due to {data['hypothesis']}.
 2. Automate connection limits scaling policies under high load.
 3. Review deployment pipelines and code validation gates.
 """
+
+        # 4.7 Memory curation logic
+        elif "distill the primary lessons-learned" in prompt_text_lower:
+            data = SCENARIO_DATA[scenario_id]
+            service = "payment-service"
+            if "scenario_2" in scenario_id or "order" in prompt_text_lower:
+                service = "order-service"
+            elif "scenario_3" in scenario_id or "user" in prompt_text_lower or "scenario_10" in scenario_id:
+                service = "user-service"
+            
+            response_text = json.dumps({
+                "incident_id": "INC_MOCK",
+                "service": service,
+                "alertname": "MockAlertName",
+                "root_cause": data["hypothesis"],
+                "evidence": data["rationale"],
+                "mitigation": data["action"],
+                "key_learnings": f"Always check for {data['hypothesis']} matching raw telemetry signals."
+            }, indent=2)
 
         # 5. Default fallback response
         else:

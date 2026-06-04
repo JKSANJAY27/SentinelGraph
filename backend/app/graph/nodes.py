@@ -7,6 +7,7 @@ import httpx
 from typing import Dict, Any, List
 from .state import IncidentState
 from ..llm import get_llm
+from ..memory.memory_store import save_memory, retrieve_relevant_memories
 
 llm = get_llm()
 
@@ -387,6 +388,13 @@ def root_cause_node(state: IncidentState) -> Dict[str, Any]:
     runbooks = state["runbooks"]
     dependencies = state["dependencies"]
     
+    # Query semantic memory store for historical incident context
+    past_memories = retrieve_relevant_memories(service, alertname)
+    if past_memories:
+        log_step(state, f"Root Cause Agent: Retrieved {len(past_memories)} relevant past incident records from long-term semantic memory.")
+    else:
+        log_step(state, "Root Cause Agent: No matching historical memories found in semantic store.")
+        
     prompt = f"""
 You are the lead SRE Root Cause Analyst Agent (Deep Agent). Your goal is to analyze the gathered system metrics, logs, git release history, operational runbooks, and topology to formulate the top 3 root-cause hypotheses for this incident.
 
@@ -410,13 +418,16 @@ GATHERED EVIDENCE:
 5. Infrastructure Topology:
 {dependencies}
 
-Formulate the top 3 root cause hypotheses.
+6. Historical SRE Learnings (Long-Term Memory):
+{past_memories}
+
+Formulate the top 3 root cause hypotheses. Consider past incident matches to correlate telemetry spikes with verified history.
 For EACH hypothesis, you MUST specify:
 - Rank (1, 2, or 3)
 - Hypothesis title
 - Confidence score (a float between 0.0 and 1.0)
-- Detailed reasoning / rationale citing exact log lines, metrics values, or deploy versions
-- Evidence source (e.g. Logs, Deploy Detective)
+- Detailed reasoning / rationale citing exact log lines, metrics values, deploy versions, or historical parallels
+- Evidence source (e.g. Logs, Deploy Detective, Semantic Memory)
 
 Be extremely precise. Do not guess or hallucinate without referencing the gathered evidence.
 Format your output exactly as a JSON list, matching this structure:
@@ -621,5 +632,67 @@ Do not guess or hallucinate details that are not supported by the telemetry. Kee
 
 def memory_curator_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Memory Curator: Storing lessons-learned in long-term memory...")
-    log_step(state, "Memory Curator: Incident memory saved.")
+    
+    service = state["service"]
+    incident_id = state["incident_id"]
+    severity = state["severity"]
+    hypotheses = state["hypotheses"]
+    recovery_plan = state["recovery_plan"]
+    history = state["execution_history"]
+    alert_info = state["alert_payload"].get("alerts", [{}])[0]
+    alertname = alert_info.get("labels", {}).get("alertname", "UnknownAlert")
+    
+    top_hypothesis = hypotheses[0] if hypotheses else {"hypothesis": "Unknown service failure", "rationale": "No hypothesis isolated."}
+    
+    prompt = f"""
+You are the Lead SRE Memory Curator Agent. Your goal is to review the resolved incident context and distill the primary lessons-learned into a structured JSON memory object.
+
+RESOLVED INCIDENT CONTEXT:
+- Incident ID: {incident_id}
+- Affected Service: {service}
+- Alert Name: {alertname}
+- Severity: {severity}
+- Top Hypothesis: {top_hypothesis.get('hypothesis')}
+- Mitigation Taken: {recovery_plan.get('action')}
+- Execution history: {history}
+
+Format your output exactly as a JSON dictionary matching this structure:
+{{
+  "incident_id": "{incident_id}",
+  "service": "{service}",
+  "alertname": "{alertname}",
+  "root_cause": "{top_hypothesis.get('hypothesis')}",
+  "evidence": "{top_hypothesis.get('rationale')}",
+  "mitigation": "{recovery_plan.get('action')}",
+  "key_learnings": "Long-term architectural key learning points or preventative actions..."
+}}
+Ensure your response is ONLY the raw JSON dictionary block.
+"""
+    try:
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+        
+        if content.startswith("```"):
+            lines = content.split("\n")
+            content = "\n".join(lines[1:-1]) if lines[-1].startswith("```") else "\n".join(lines[1:])
+            content = content.strip()
+            
+        memory_data = json.loads(content)
+        save_memory(memory_data)
+        log_step(state, f"Memory Curator: Distilled experience and saved lesson-learned under ID: {memory_data.get('incident_id')}.")
+    except Exception as exc:
+        print(f"[MEMORY CURATOR] Failed to parse or save LLM JSON response: {str(exc)}")
+        # Fallback manual extraction to prevent graph crash
+        fallback_data = {
+            "incident_id": incident_id,
+            "service": service,
+            "alertname": alertname,
+            "root_cause": top_hypothesis.get("hypothesis"),
+            "evidence": top_hypothesis.get("rationale"),
+            "mitigation": recovery_plan.get("action"),
+            "key_learnings": "Verify telemetry metrics saturation patterns and scale pool/caches proactively."
+        }
+        save_memory(fallback_data)
+        log_step(state, "Memory Curator: Successfully saved incident fallback memory record.")
+        
     return {"execution_history": state["execution_history"]}
