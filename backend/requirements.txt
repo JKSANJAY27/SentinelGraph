@@ -10,3 +10,5 @@ prometheus-client==0.20.0
 python-dotenv==1.0.1
 langchain-google-genai>=1.0.3
 langfuse>=2.0.0
+psycopg2-binary>=2.9.9
+
