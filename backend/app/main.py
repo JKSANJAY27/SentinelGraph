@@ -26,6 +26,37 @@ from .mcp.mcp_server import mcp_server
 # Initialize DB Tables
 Base.metadata.create_all(bind=engine)
 
+def seed_default_settings():
+    from .database import SessionLocal
+    from .models import SystemSetting
+    db = SessionLocal()
+    try:
+        defaults = {
+            "prometheus_url": "http://localhost:9090",
+            "logs_mode": "docker",
+            "kubernetes_namespace": "default",
+            "restart_mode": "docker",
+            "github_repo": "",
+            "github_branch": "master",
+            "github_token": "",
+            "slack_webhook_url": "",
+            "langfuse_public_key": os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-0f43a27c-5b4d-4f10-9446-6eee8060216c"),
+            "langfuse_secret_key": os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-f656a0df-ba2b-4c14-b722-f582b67516f3"),
+            "langfuse_base_url": os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+        }
+        for k, v in defaults.items():
+            existing = db.query(SystemSetting).filter(SystemSetting.key == k).first()
+            if not existing:
+                setting = SystemSetting(key=k, value=v)
+                db.add(setting)
+        db.commit()
+    except Exception as exc:
+        print(f"[SETTINGS SEEDER] Error: {str(exc)}")
+    finally:
+        db.close()
+
+seed_default_settings()
+
 app = FastAPI(title="SentinelGraph AI Incident Commander Backend", version="1.0.0")
 
 # Setup CORS for Vite UI Dashboard
@@ -171,6 +202,85 @@ def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: Backgroun
     background_tasks.add_task(run_incident_graph_async, incident_id, initial_state)
     
     return db_incident
+
+from .schemas import SettingsResponse
+
+@app.get("/api/v1/settings", response_model=SettingsResponse)
+def get_settings(db: Session = Depends(get_db)):
+    from .models import SystemSetting
+    settings = db.query(SystemSetting).all()
+    s_dict = {s.key: s.value or "" for s in settings}
+    required_keys = [
+        "prometheus_url", "logs_mode", "kubernetes_namespace", "restart_mode",
+        "github_repo", "github_branch", "github_token", "slack_webhook_url",
+        "langfuse_public_key", "langfuse_secret_key", "langfuse_base_url"
+    ]
+    for key in required_keys:
+        if key not in s_dict:
+            s_dict[key] = ""
+    return SettingsResponse(**s_dict)
+
+@app.put("/api/v1/settings", response_model=SettingsResponse)
+def update_settings(payload: SettingsResponse, db: Session = Depends(get_db)):
+    from .models import SystemSetting
+    payload_dict = payload.model_dump()
+    for key, value in payload_dict.items():
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if setting:
+            setting.value = str(value)
+        else:
+            setting = SystemSetting(key=key, value=str(value))
+            db.add(setting)
+        if key in ["langfuse_public_key", "langfuse_secret_key", "langfuse_base_url"]:
+            os.environ[key.upper()] = str(value)
+    db.commit()
+    return get_settings(db)
+
+@app.post("/api/v1/settings/test")
+def test_setting_connection(payload: dict):
+    target = payload.get("target")
+    value = payload.get("value")
+    
+    if target == "prometheus":
+        import httpx
+        try:
+            url = f"{value.rstrip('/')}/api/v1/query"
+            res = httpx.get(url, params={"query": "1"}, timeout=3.0)
+            if res.status_code == 200:
+                return {"status": "success", "message": "Successfully reached Prometheus API."}
+            return {"status": "error", "message": f"Prometheus returned status code {res.status_code}."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to connect: {str(e)}"}
+            
+    elif target == "slack":
+        import httpx
+        try:
+            slack_payload = {
+                "text": "🛡️ *SentinelGraph Connection Test*: Slack webhook integration is verified and active!"
+            }
+            res = httpx.post(value, json=slack_payload, timeout=3.0)
+            if res.status_code in [200, 201]:
+                return {"status": "success", "message": "Successfully posted test message to Slack."}
+            return {"status": "error", "message": f"Slack webhook returned status {res.status_code}."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to post to Slack: {str(e)}"}
+            
+    elif target == "github":
+        import httpx
+        try:
+            headers = {}
+            token = payload.get("token")
+            if token:
+                headers["Authorization"] = f"token {token}"
+            url = f"https://api.github.com/repos/{value}/commits"
+            res = httpx.get(url, headers=headers, timeout=3.0)
+            if res.status_code == 200:
+                return {"status": "success", "message": f"Successfully connected to GitHub repo '{value}' commits registry."}
+            return {"status": "error", "message": f"GitHub returned status {res.status_code} (repo may be private or invalid)."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to connect to GitHub: {str(e)}"}
+            
+    return {"status": "error", "message": "Unknown test target."}
 
 @app.get("/api/v1/incidents", response_model=List[IncidentResponse])
 def get_incidents(db: Session = Depends(get_db)):

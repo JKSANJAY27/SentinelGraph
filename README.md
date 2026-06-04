@@ -126,6 +126,20 @@ SentinelGraph is validated against 10 deterministic failure scenarios defined in
 
 ---
 
+## ⚙️ Live System Settings & Integrations Config
+
+SentinelGraph features a real-time **System Settings & Integrations** panel accessible directly from the React dashboard header. This lets you connect the multi-agent incident commander to actual production resources:
+
+1. **Metrics Telemetry (Prometheus)**: Set `prometheus_url` to query your central Prometheus server (e.g. `http://prometheus-service.monitoring.svc.cluster.local:9090`).
+2. **Container Logging & Action Modes**:
+   - **Docker mode**: Queries local container streams (`docker logs`) and triggers recovery restarts (`docker restart`).
+   - **Kubernetes mode**: Connects to the active cluster namespace, queries logs directly from pod objects (`CoreV1Api`), and executes rollouts (`kubectl rollout restart deployment/...` via `AppsV1Api`).
+3. **GitHub Release/Commit Registry**: Set your `github_repo` (e.g. `owner/repo`) and target branch. The **Deploy Detective** will automatically query the actual GitHub Commits API to trace recent releases.
+4. **Slack Team Webhook Alerts**: Connect a Slack incoming webhook. SentinelGraph will post notifications for key SRE milestones (Incident detected, mitigation proposed/awaiting approval, and incident resolved).
+5. **Langfuse Tracing Configuration**: Dynamically update your public/secret credentials to enable LLM observability traces.
+
+---
+
 ## 📖 Getting Started & Local Setup
 
 ### Prerequisite Environment Configuration

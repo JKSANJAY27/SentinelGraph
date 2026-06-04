@@ -13,3 +13,9 @@ class Incident(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     alert_payload = Column(JSON, nullable=True)
     state_json = Column(JSON, nullable=True)
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True, index=True)
+    value = Column(String, nullable=True)

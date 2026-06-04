@@ -11,6 +11,56 @@ from ..memory.memory_store import save_memory, retrieve_relevant_memories
 
 llm = get_llm()
 
+def get_setting_value(key: str, default: str) -> str:
+    """Helper to query database-backed settings dynamically, falling back to environment variables."""
+    from app.database import SessionLocal
+    from app.models import SystemSetting
+    db = SessionLocal()
+    try:
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if setting and setting.value is not None:
+            return setting.value
+    except Exception as exc:
+        print(f"[SETTINGS] Failed to read setting '{key}': {str(exc)}")
+    finally:
+        db.close()
+    return os.getenv(key.upper(), default)
+
+def trigger_slack_notification(incident_id: str, message: str, severity: str):
+    """Posts a rich Slack notification attachment if slack_webhook_url is configured in settings."""
+    slack_url = get_setting_value("slack_webhook_url", "")
+    if not slack_url:
+        return
+    try:
+        import httpx
+        color = "#ef4444" if severity.lower() == "critical" else "#f59e0b" if severity.lower() == "warning" else "#6366f1"
+        payload = {
+            "attachments": [
+                {
+                    "fallback": f"SentinelGraph Alert: {message}",
+                    "color": color,
+                    "title": f"🛡️ SentinelGraph SRE Update",
+                    "text": message,
+                    "fields": [
+                        {"title": "Severity", "value": severity.upper(), "short": True},
+                        {"title": "Incident ID", "value": incident_id, "short": True}
+                    ],
+                    "footer": "SentinelGraph Autonomous Incident Commander",
+                    "ts": int(time.time())
+                }
+            ]
+        }
+        # Run fire-and-forget in background to avoid blocking the agent graph thread
+        import threading
+        def post():
+            try:
+                httpx.post(slack_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+        threading.Thread(target=post, daemon=True).start()
+    except Exception as exc:
+        print(f"[SLACK INTEGRATION] Failed to trigger Slack thread: {str(exc)}")
+
 # Global registry of real-time SSE queues for streaming agent updates to the UI
 # incident_id -> list of (asyncio.Queue, asyncio.AbstractEventLoop)
 incident_queues: Dict[str, List[tuple]] = {}
@@ -102,9 +152,33 @@ def log_step(state: IncidentState, msg: str) -> None:
             except Exception:
                 pass
 
+    # Trigger Slack notifications on SRE milestones
+    incident_id = state.get("incident_id")
+    severity = state.get("severity", "info")
+    if incident_id:
+        if msg.startswith("Supervisor: Inciting"):
+            trigger_slack_notification(
+                incident_id,
+                f"🚨 *Outage Detected*: SRE multi-agent workspace incited for service *{state.get('service', 'unknown')}*.",
+                severity
+            )
+        elif msg.startswith("Recovery Planner Agent: Successfully formulated dynamic plan"):
+            plan_text = state.get("recovery_plan", {}).get("action", "N/A")
+            trigger_slack_notification(
+                incident_id,
+                f"⚠️ *Mitigation Strategy Formulated*: Specialist agents proposed recovery plan:\n`{plan_text}`\n_Awaiting human gate review and operator approval in the incident dashboard._",
+                severity
+            )
+        elif msg.startswith("Postmortem Agent: Postmortem report rendered successfully"):
+            trigger_slack_notification(
+                incident_id,
+                f"✅ *Remediation Successful*: Incident mitigation executed. Postmortem report compiled and saved successfully.",
+                severity
+            )
+
 def fetch_container_logs(container_name: str) -> List[str]:
-    """Tries to query live logs from Docker or Kubernetes based on LOGS_MODE configuration."""
-    logs_mode = os.getenv("LOGS_MODE", "docker").lower()
+    """Tries to query live logs from Docker or Kubernetes based on logs_mode database configuration."""
+    logs_mode = get_setting_value("logs_mode", "docker").lower()
     
     if logs_mode == "kubernetes":
         try:
@@ -115,7 +189,7 @@ def fetch_container_logs(container_name: str) -> List[str]:
                 config.load_kube_config()
                 
             v1 = client.CoreV1Api()
-            namespace = os.getenv("KUBERNETES_NAMESPACE", "default")
+            namespace = get_setting_value("kubernetes_namespace", "default")
             
             # Find pod matching label
             pod_list = v1.list_namespaced_pod(
@@ -305,19 +379,58 @@ def fetch_simulated_deploys(service: str) -> List[Dict[str, Any]]:
 def deploy_detective_node(state: IncidentState) -> Dict[str, Any]:
     log_step(state, "Deploy Detective: Querying system change logs and git deploy registries...")
     
-    simulated_deploys = fetch_simulated_deploys(state["service"])
+    github_repo = get_setting_value("github_repo", "")
+    github_branch = get_setting_value("github_branch", "master")
+    github_token = get_setting_value("github_token", "")
+    
+    deploys = []
+    if github_repo:
+        try:
+            import httpx
+            headers = {
+                "User-Agent": "SentinelGraph-SRE-Agent"
+            }
+            if github_token:
+                headers["Authorization"] = f"token {github_token}"
+            
+            url = f"https://api.github.com/repos/{github_repo}/commits"
+            params = {"sha": github_branch, "per_page": 5}
+            
+            res = httpx.get(url, headers=headers, params=params, timeout=4.0)
+            if res.status_code == 200:
+                commits = res.json()
+                for c in commits:
+                    commit_sha = c.get("sha", "")[:7]
+                    commit_msg = c.get("commit", {}).get("message", "No message")
+                    author = c.get("commit", {}).get("author", {}).get("name", "Unknown")
+                    date = c.get("commit", {}).get("author", {}).get("date", "")
+                    
+                    deploys.append({
+                        "version": f"sha-{commit_sha}",
+                        "timestamp": date,
+                        "author": author,
+                        "commit": commit_sha,
+                        "status": "active" if len(deploys) == 0 else "stable",
+                        "details": commit_msg
+                    })
+                log_step(state, f"Deploy Detective: Successfully queried commits from GitHub repository '{github_repo}'.")
+        except Exception as exc:
+            log_step(state, f"Deploy Detective: Failed to fetch commits from GitHub repository: {str(exc)}")
+            
+    if not deploys:
+        deploys = fetch_simulated_deploys(state["service"])
         
     prompt = f"""
-You are an expert SRE Deploy Detective Agent. Review these recent deployments:
-{simulated_deploys}
-
-Assess if any recent deployment could explain an alert on service '{state['service']}'.
-Summarize your assessment and identify if a rollback is recommended.
-"""
+    You are an expert SRE Deploy Detective Agent. Review these recent deployments:
+    {deploys}
+    
+    Assess if any recent deployment could explain an alert on service '{state['service']}'.
+    Summarize your assessment and identify if a rollback is recommended.
+    """
     response = llm.invoke(prompt)
     log_step(state, f"Deploy Detective - LLM Analysis:\n{response.content}")
     
-    state["deploys"] = simulated_deploys
+    state["deploys"] = deploys
     return {"deploys": state["deploys"], "execution_history": state["execution_history"]}
 
 def runbook_docs_node(state: IncidentState) -> Dict[str, Any]:
@@ -347,7 +460,7 @@ Summarize the appropriate action items and verification procedures matching this
 def query_prometheus_metric(query_str: str) -> float:
     """Safely queries Prometheus container API, returning float result or 0.0."""
     try:
-        prometheus_url = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+        prometheus_url = get_setting_value("prometheus_url", "http://localhost:9090")
         url = f"{prometheus_url.rstrip('/')}/api/v1/query"
         response = httpx.get(url, params={"query": query_str}, timeout=2.0)
         if response.status_code == 200:

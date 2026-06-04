@@ -15,7 +15,8 @@ import {
   UserCheck,
   RefreshCw,
   Zap,
-  XCircle
+  XCircle,
+  Settings
 } from 'lucide-react'
 import './App.css'
 
@@ -28,6 +29,23 @@ function App() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [chaosLoading, setChaosLoading] = useState(null)
   const [selectedTopologyNode, setSelectedTopologyNode] = useState(null)
+
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [settingsForm, setSettingsForm] = useState({
+    prometheus_url: 'http://localhost:9090',
+    logs_mode: 'docker',
+    kubernetes_namespace: 'default',
+    restart_mode: 'docker',
+    github_repo: '',
+    github_branch: 'master',
+    github_token: '',
+    slack_webhook_url: '',
+    langfuse_public_key: '',
+    langfuse_secret_key: '',
+    langfuse_base_url: ''
+  })
+  const [testingConnection, setTestingConnection] = useState(null)
+  const [testResult, setTestResult] = useState({ status: '', message: '' })
 
   const [isReplayMode, setIsReplayMode] = useState(false)
   const [replayStepIndex, setReplayStepIndex] = useState(0)
@@ -111,9 +129,68 @@ function App() {
     return () => clearInterval(interval)
   }, [selectedIncident?.id, selectedIncident?.status])
 
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/v1/settings`)
+      if (response.ok) {
+        const data = await response.json()
+        setSettingsForm(data)
+      }
+    } catch (err) {
+      console.error("Failed to fetch settings:", err)
+    }
+  }
+
+  const saveSettings = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settingsForm)
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setSettingsForm(data)
+        alert("Settings saved successfully!")
+        setIsSettingsOpen(false)
+        setTestResult({ status: '', message: '' })
+      }
+    } catch (err) {
+      console.error("Failed to save settings:", err)
+      alert("Failed to save settings.")
+    }
+  }
+
+  const testConnection = async (target, value) => {
+    setTestingConnection(target)
+    setTestResult({ status: '', message: '' })
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/v1/settings/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          target, 
+          value,
+          token: settingsForm.github_token 
+        })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setTestResult(data)
+      } else {
+        setTestResult({ status: 'error', message: 'Failed to trigger connection test.' })
+      }
+    } catch (err) {
+      setTestResult({ status: 'error', message: `Test failed: ${err.message}` })
+    } finally {
+      setTestingConnection(null)
+    }
+  }
+
   // Load initial list on mount
   useEffect(() => {
     fetchIncidents()
+    fetchSettings()
   }, [])
 
   // Coordinated Real-Time SSE Listener for the selected active incident
@@ -364,6 +441,9 @@ function App() {
           </div>
           <button className="btn btn-secondary" onClick={() => fetchIncidents()} disabled={isRefreshing}>
             <RefreshCw className={isRefreshing ? "animate-spin" : ""} size={14} />
+          </button>
+          <button className="btn btn-secondary" onClick={() => setIsSettingsOpen(true)} title="Settings & integrations config">
+            <Settings size={14} />
           </button>
         </div>
       </header>
@@ -986,6 +1066,222 @@ function App() {
           </section>
         )}
       </main>
+
+      {isSettingsOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content settings-modal glass-panel">
+            <div className="modal-header">
+              <h2>⚙️ System Config & Integrations</h2>
+              <button className="close-btn" onClick={() => { setIsSettingsOpen(false); setTestResult({ status: '', message: '' }); }}>✕</button>
+            </div>
+            
+            <div className="modal-body">
+              {/* Prometheus config */}
+              <div className="settings-section">
+                <h3>📈 Metrics Telemetry (Prometheus)</h3>
+                <div className="input-group">
+                  <label htmlFor="prometheus_url">Prometheus Server API URL</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      id="prometheus_url" 
+                      value={settingsForm.prometheus_url} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, prometheus_url: e.target.value })}
+                      placeholder="e.g. http://localhost:9090"
+                    />
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                      onClick={() => testConnection("prometheus", settingsForm.prometheus_url)}
+                      disabled={testingConnection !== null}
+                    >
+                      {testingConnection === 'prometheus' ? 'Testing...' : 'Test Link'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Logs & Remediation Environment Configuration */}
+              <div className="settings-section">
+                <h3>🖥️ Container Logging & Remediation</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="input-group">
+                    <label htmlFor="logs_mode">Telemetry Logs Mode</label>
+                    <select 
+                      id="logs_mode" 
+                      value={settingsForm.logs_mode} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, logs_mode: e.target.value })}
+                    >
+                      <option value="mock">Simulated SRE Logs (Default)</option>
+                      <option value="docker">Local Docker Container Logs</option>
+                      <option value="kubernetes">Kubernetes Pod Stream Logs</option>
+                    </select>
+                  </div>
+
+                  <div className="input-group">
+                    <label htmlFor="restart_mode">Remediation Action Mode</label>
+                    <select 
+                      id="restart_mode" 
+                      value={settingsForm.restart_mode} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, restart_mode: e.target.value })}
+                    >
+                      <option value="docker">Docker Restart Container</option>
+                      <option value="kubernetes">Kubernetes Deployment Rollout Restart</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="input-group" style={{ marginTop: '8px' }}>
+                  <label htmlFor="kubernetes_namespace">Kubernetes Target Namespace</label>
+                  <input 
+                    type="text" 
+                    id="kubernetes_namespace" 
+                    value={settingsForm.kubernetes_namespace} 
+                    onChange={(e) => setSettingsForm({ ...settingsForm, kubernetes_namespace: e.target.value })}
+                    placeholder="e.g. default, production"
+                    disabled={settingsForm.logs_mode !== 'kubernetes' && settingsForm.restart_mode !== 'kubernetes'}
+                  />
+                </div>
+              </div>
+
+              {/* GitHub Repository integration */}
+              <div className="settings-section">
+                <h3>📦 GitHub Release/Commit Registry</h3>
+                <div className="input-group">
+                  <label htmlFor="github_repo">GitHub Repository Path</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      id="github_repo" 
+                      value={settingsForm.github_repo} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, github_repo: e.target.value })}
+                      placeholder="e.g. owner/repo-name"
+                    />
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                      onClick={() => testConnection("github", settingsForm.github_repo)}
+                      disabled={testingConnection !== null}
+                    >
+                      {testingConnection === 'github' ? 'Testing...' : 'Test Link'}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '12px', marginTop: '8px' }}>
+                  <div className="input-group">
+                    <label htmlFor="github_branch">Target Branch</label>
+                    <input 
+                      type="text" 
+                      id="github_branch" 
+                      value={settingsForm.github_branch} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, github_branch: e.target.value })}
+                      placeholder="e.g. master"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label htmlFor="github_token">Personal Access Token (PAT) - Optional</label>
+                    <input 
+                      type="password" 
+                      id="github_token" 
+                      value={settingsForm.github_token} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, github_token: e.target.value })}
+                      placeholder="OAuth token for private repositories"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Slack webhook url integrations */}
+              <div className="settings-section">
+                <h3>💬 Slack SRE Team Channel Webhook</h3>
+                <div className="input-group">
+                  <label htmlFor="slack_webhook_url">Slack Webhook URL</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      id="slack_webhook_url" 
+                      value={settingsForm.slack_webhook_url} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, slack_webhook_url: e.target.value })}
+                      placeholder="e.g. https://hooks.slack.com/services/..."
+                    />
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                      onClick={() => testConnection("slack", settingsForm.slack_webhook_url)}
+                      disabled={testingConnection !== null}
+                    >
+                      {testingConnection === 'slack' ? 'Testing...' : 'Test Post'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Langfuse observability configurations */}
+              <div className="settings-section">
+                <h3>🔍 Langfuse LLM Observability & Tracing</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="input-group">
+                    <label htmlFor="langfuse_public_key">Langfuse Public Key</label>
+                    <input 
+                      type="text" 
+                      id="langfuse_public_key" 
+                      value={settingsForm.langfuse_public_key} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, langfuse_public_key: e.target.value })}
+                      placeholder="pk-lf-..."
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label htmlFor="langfuse_secret_key">Langfuse Secret Key</label>
+                    <input 
+                      type="password" 
+                      id="langfuse_secret_key" 
+                      value={settingsForm.langfuse_secret_key} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, langfuse_secret_key: e.target.value })}
+                      placeholder="sk-lf-..."
+                    />
+                  </div>
+                </div>
+                <div className="input-group" style={{ marginTop: '8px' }}>
+                  <label htmlFor="langfuse_base_url">Langfuse Host URL</label>
+                  <input 
+                    type="text" 
+                    id="langfuse_base_url" 
+                    value={settingsForm.langfuse_base_url} 
+                    onChange={(e) => setSettingsForm({ ...settingsForm, langfuse_base_url: e.target.value })}
+                    placeholder="https://cloud.langfuse.com"
+                  />
+                </div>
+              </div>
+
+              {/* Connection Test feedback */}
+              {testResult.message && (
+                <div 
+                  className={`settings-test-banner ${testResult.status}`} 
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    lineHeight: '1.4',
+                    background: testResult.status === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    border: testResult.status === 'success' ? '1px solid #10b981' : '1px solid #ef4444',
+                    color: testResult.status === 'success' ? '#10b981' : '#ef4444',
+                    marginTop: '8px'
+                  }}
+                >
+                  <strong>{testResult.status === 'success' ? '✔ Connection Verified: ' : '❌ Verification Failed: '}</strong>
+                  {testResult.message}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setIsSettingsOpen(false); setTestResult({ status: '', message: '' }); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveSettings}>Save Configurations</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

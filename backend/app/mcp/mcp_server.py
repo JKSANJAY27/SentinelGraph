@@ -1,6 +1,21 @@
 import json
 from typing import Dict, Any, List
 
+def get_setting_value(key: str, default: str) -> str:
+    from app.database import SessionLocal
+    from app.models import SystemSetting
+    import os
+    db = SessionLocal()
+    try:
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if setting and setting.value is not None:
+            return setting.value
+    except Exception:
+        pass
+    finally:
+        db.close()
+    return os.getenv(key.upper(), default)
+
 class MCPServer:
     def __init__(self):
         self.tools = {
@@ -114,10 +129,9 @@ class MCPServer:
             return {"content": [{"type": "text", "text": json.dumps(runbooks)}], "runbooks": runbooks}
 
         elif name == "restart_container":
-            import os
             import subprocess
             
-            restart_mode = os.getenv("RESTART_MODE", "docker").lower()
+            restart_mode = get_setting_value("restart_mode", "docker").lower()
             if restart_mode == "kubernetes":
                 try:
                     from kubernetes import client, config
@@ -128,7 +142,7 @@ class MCPServer:
                         config.load_kube_config()
                         
                     v1 = client.AppsV1Api()
-                    namespace = os.getenv("KUBERNETES_NAMESPACE", "default")
+                    namespace = get_setting_value("kubernetes_namespace", "default")
                     
                     # Triggers a rolling restart of the deployment in Kubernetes
                     now = datetime.datetime.now(datetime.timezone.utc).isoformat()

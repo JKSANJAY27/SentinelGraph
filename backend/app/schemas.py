@@ -45,3 +45,16 @@ class ApprovalRequest(BaseModel):
     action: str  # "approve" or "reject"
     comments: Optional[str] = None
 
+class SettingsResponse(BaseModel):
+    prometheus_url: str
+    logs_mode: str
+    kubernetes_namespace: str
+    restart_mode: str
+    github_repo: str
+    github_branch: str
+    github_token: str
+    slack_webhook_url: str
+    langfuse_public_key: str
+    langfuse_secret_key: str
+    langfuse_base_url: str
+
