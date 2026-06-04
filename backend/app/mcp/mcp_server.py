@@ -114,7 +114,42 @@ class MCPServer:
             return {"content": [{"type": "text", "text": json.dumps(runbooks)}], "runbooks": runbooks}
 
         elif name == "restart_container":
+            import os
             import subprocess
+            
+            restart_mode = os.getenv("RESTART_MODE", "docker").lower()
+            if restart_mode == "kubernetes":
+                try:
+                    from kubernetes import client, config
+                    import datetime
+                    try:
+                        config.load_incluster_config()
+                    except Exception:
+                        config.load_kube_config()
+                        
+                    v1 = client.AppsV1Api()
+                    namespace = os.getenv("KUBERNETES_NAMESPACE", "default")
+                    
+                    # Triggers a rolling restart of the deployment in Kubernetes
+                    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    body = {
+                        'spec': {
+                            'template': {
+                                'metadata': {
+                                    'annotations': {
+                                        'kubectl.kubernetes.io/restartedAt': now
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    v1.patch_namespaced_deployment(name=service, namespace=namespace, body=body)
+                    msg = f"Deployment '{service}' restarted successfully in Kubernetes namespace '{namespace}'."
+                    return {"content": [{"type": "text", "text": msg}], "status": "success"}
+                except Exception as exc:
+                    print(f"[RESTART CONTAINER] Failed to patch Kubernetes deployment: {str(exc)}")
+            
+            # Fallback to docker restart
             try:
                 result = subprocess.run(
                     ["docker", "restart", service],

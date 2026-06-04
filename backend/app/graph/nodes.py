@@ -103,7 +103,45 @@ def log_step(state: IncidentState, msg: str) -> None:
                 pass
 
 def fetch_container_logs(container_name: str) -> List[str]:
-    """Tries to query live logs from Docker. Falls back to empty list on failure."""
+    """Tries to query live logs from Docker or Kubernetes based on LOGS_MODE configuration."""
+    logs_mode = os.getenv("LOGS_MODE", "docker").lower()
+    
+    if logs_mode == "kubernetes":
+        try:
+            from kubernetes import client, config
+            try:
+                config.load_incluster_config()
+            except Exception:
+                config.load_kube_config()
+                
+            v1 = client.CoreV1Api()
+            namespace = os.getenv("KUBERNETES_NAMESPACE", "default")
+            
+            # Find pod matching label
+            pod_list = v1.list_namespaced_pod(
+                namespace=namespace,
+                label_selector=f"app={container_name}"
+            )
+            
+            if not pod_list.items:
+                # Fallback to matching prefix
+                pod_list = v1.list_namespaced_pod(namespace=namespace)
+                matching_pods = [p for p in pod_list.items if p.metadata.name.startswith(container_name)]
+            else:
+                matching_pods = pod_list.items
+                
+            if matching_pods:
+                pod_name = matching_pods[0].metadata.name
+                logs = v1.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace=namespace,
+                    tail_lines=40
+                )
+                return [line.strip() for line in logs.split("\n") if line.strip()]
+        except Exception as exc:
+            print(f"[LOG INVESTIGATOR] Failed to query Kubernetes logs for '{container_name}': {str(exc)}")
+            
+    # Default/Fallback to docker logs mode
     try:
         result = subprocess.run(
             ["docker", "logs", "--tail", "40", container_name],
@@ -309,7 +347,8 @@ Summarize the appropriate action items and verification procedures matching this
 def query_prometheus_metric(query_str: str) -> float:
     """Safely queries Prometheus container API, returning float result or 0.0."""
     try:
-        url = "http://localhost:9090/api/v1/query"
+        prometheus_url = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+        url = f"{prometheus_url.rstrip('/')}/api/v1/query"
         response = httpx.get(url, params={"query": query_str}, timeout=2.0)
         if response.status_code == 200:
             data = response.json()
