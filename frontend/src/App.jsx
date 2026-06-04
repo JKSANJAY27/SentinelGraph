@@ -81,6 +81,36 @@ function App() {
     }
   }
 
+  // Fetch a single incident's latest state from the API
+  const fetchSingleIncident = async (incidentId) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/v1/incidents/${incidentId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setSelectedIncident(data)
+        // Also update in the main incidents list
+        setIncidents(prev => prev.map(inc => inc.id === incidentId ? data : inc))
+      }
+    } catch (err) {
+      console.error("Failed to fetch single incident:", err)
+    }
+  }
+
+  // Poll active/running incidents to ensure UI remains sync'd even if SSE drops or lags
+  useEffect(() => {
+    if (!selectedIncident) return
+    const isTerminal = ['recovered', 'rejected', 'error'].includes(selectedIncident.status)
+    if (isTerminal) return
+
+    fetchSingleIncident(selectedIncident.id)
+
+    const interval = setInterval(() => {
+      fetchSingleIncident(selectedIncident.id)
+    }, 1500) // Poll every 1.5 seconds for active runs
+
+    return () => clearInterval(interval)
+  }, [selectedIncident?.id, selectedIncident?.status])
+
   // Load initial list on mount
   useEffect(() => {
     fetchIncidents()
@@ -265,25 +295,41 @@ function App() {
       stroke: `M0 38 Q30 32, 60 ${38 - (pct * 10)} T120 ${38 - (pct * 18)} T180 ${38 - (pct * 22)} T240 ${yVal}`
     }
   }
+
+  const renderLoadingState = (agentName, description) => {
+    return (
+      <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+        <RefreshCw className="animate-spin" size={24} style={{ color: 'var(--color-primary)', marginBottom: '12px', display: 'inline-block' }} />
+        <h4 style={{ fontSize: '13px', fontWeight: '700', marginBottom: '4px', color: 'var(--text-main)' }}>{agentName} is running...</h4>
+        <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{description}</p>
+      </div>
+    )
+  }
   
   // Timeline node logic
   const getTimelineNodes = () => {
+    if (!selectedIncident) return []
     const nodes = [
-      { id: 'supervisor', label: 'Supervisor', key: 'Supervisor:' },
-      { id: 'triage', label: 'Triage', key: 'Alert Triage Agent:' },
-      { id: 'logs', label: 'Logs', key: 'Logs Investigator:' },
-      { id: 'metrics', label: 'Metrics', key: 'Metrics Analyst:' },
-      { id: 'deploy', label: 'Deploy Detective', key: 'Deploy Detective:' },
-      { id: 'docs', label: 'Runbooks', key: 'Runbook Assistant:' },
-      { id: 'dependencies', label: 'Dependencies', key: 'Dependency Detective:' },
-      { id: 'root_cause', label: 'Root Cause', key: 'Root Cause Agent:' },
-      { id: 'recovery', label: 'Recovery Planner', key: 'Recovery Planner Agent:' }
+      { id: 'supervisor', label: 'Supervisor', isDone: true },
+      { id: 'triage', label: 'Triage', isDone: !!state.service && state.service !== 'N/A' },
+      { id: 'logs', label: 'Logs', isDone: state.logs && Object.keys(state.logs).length > 0 },
+      { id: 'metrics', label: 'Metrics', isDone: state.metrics && Object.keys(state.metrics).length > 0 },
+      { id: 'deploy', label: 'Deploy Detective', isDone: state.deploys && state.deploys.length > 0 },
+      { id: 'docs', label: 'Runbooks', isDone: state.runbooks && state.runbooks.length > 0 },
+      { id: 'dependencies', label: 'Dependencies', isDone: state.dependencies && state.dependencies.nodes && state.dependencies.nodes.length > 0 },
+      { id: 'root_cause', label: 'Root Cause', isDone: state.hypotheses && state.hypotheses.length > 0 },
+      { id: 'recovery', label: 'Recovery Planner', isDone: state.recovery_plan && !!state.recovery_plan.action }
     ]
 
-    return nodes.map(n => {
-      const isCompleted = history.some(line => line.includes(n.key) && !line.includes("actively") && !line.includes("Fetching"))
-      const isActive = history.length > 0 && !isCompleted && history[history.length - 1].includes(n.key)
-      return { ...n, status: isCompleted ? 'completed' : isActive ? 'active' : 'pending' }
+    return nodes.map((n, idx) => {
+      const isCompleted = n.isDone;
+      const isPreviousCompleted = idx === 0 || nodes[idx - 1].isDone;
+      const isActive = !isCompleted && isPreviousCompleted && !['recovered', 'rejected', 'error'].includes(selectedIncident?.status);
+      return { 
+        id: n.id, 
+        label: n.label, 
+        status: isCompleted ? 'completed' : isActive ? 'active' : 'pending' 
+      }
     })
   }
 
@@ -393,7 +439,10 @@ function App() {
                 <span className={`severity-badge ${selectedIncident.severity.toLowerCase()}`} style={{ padding: '6px 12px', fontSize: '12px' }}>
                   {selectedIncident.severity.toUpperCase()}
                 </span>
-                <span className="service-pill" style={{ background: 'rgba(99, 102, 241, 0.1)', borderColor: 'var(--color-primary)', color: 'white' }}>
+                <span className="service-pill" style={{ background: 'rgba(99, 102, 241, 0.1)', borderColor: 'var(--color-primary)', color: 'white', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {!['recovered', 'rejected', 'error'].includes(selectedIncident.status) && (
+                    <span className="status-dot orange animate-pulse" style={{ width: '6px', height: '6px', margin: 0 }}></span>
+                  )}
                   {selectedIncident.status.toUpperCase()}
                 </span>
               </div>
@@ -528,6 +577,8 @@ function App() {
                                 {line}
                               </div>
                             ))
+                          ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                            renderLoadingState("Logs Investigator Agent", "Actively fetching container logs and system diagnostics.")
                           ) : (
                             <div style={{ color: 'var(--text-dark)' }}>No log events received. Run Logs Investigator agent node.</div>
                           )}
@@ -599,6 +650,8 @@ function App() {
                               </div>
                             );
                           })()
+                        ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                          renderLoadingState("Metrics Analyst Agent", "Scraping live Prometheus HTTP latency and CPU trends.")
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No metrics loaded.</p>
                         )}
@@ -620,6 +673,8 @@ function App() {
                               </div>
                             ))}
                           </div>
+                        ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                          renderLoadingState("Deploy Detective Agent", "Checking recent git deployment logs and config changes.")
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No deploy history queried.</p>
                         )}
@@ -629,12 +684,18 @@ function App() {
                     {activeTab === 'runbooks' && (
                       <div>
                         <h3 style={{ fontSize: '14px', marginBottom: '10px' }}>SRE Operational Guidelines</h3>
-                        {state.runbooks && state.runbooks.map((rb, idx) => (
-                          <div key={idx} className="glass-panel" style={{ padding: '16px' }}>
-                            <h4 style={{ fontSize: '13px', fontWeight: '700', marginBottom: '6px', color: 'var(--color-secondary)' }}>{rb.title}</h4>
-                            <p style={{ fontSize: '12px', lineheight: '1.6', color: 'var(--text-muted)' }}>{rb.steps}</p>
-                          </div>
-                        ))}
+                        {state.runbooks && state.runbooks.length > 0 ? (
+                          state.runbooks.map((rb, idx) => (
+                            <div key={idx} className="glass-panel" style={{ padding: '16px' }}>
+                              <h4 style={{ fontSize: '13px', fontWeight: '700', marginBottom: '6px', color: 'var(--color-secondary)' }}>{rb.title}</h4>
+                              <p style={{ fontSize: '12px', lineheight: '1.6', color: 'var(--text-muted)' }}>{rb.steps}</p>
+                            </div>
+                          ))
+                        ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                          renderLoadingState("Runbook Assistant Agent", "Locating matching operational guidelines and recovery path runbooks.")
+                        ) : (
+                          <p style={{ color: 'var(--text-dark)' }}>No runbooks loaded.</p>
+                        )}
                       </div>
                     )}
 
@@ -790,6 +851,8 @@ function App() {
                               )}
                             </div>
                           </div>
+                        ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                          renderLoadingState("Dependency Detective Agent", "Mapping platform connectivity graph and microservice boundaries.")
                         ) : (
                           <p style={{ color: 'var(--text-dark)' }}>No topology calculated.</p>
                         )}
@@ -822,21 +885,30 @@ function App() {
                     <h3 style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '12px' }}>
                       Root Cause Isolated
                     </h3>
-                    {state.hypotheses && state.hypotheses.map((hyp, idx) => (
-                      <div key={idx} className="hypothesis-card">
-                        <div className="hyp-header">
-                          <span className="hyp-title">Hypothesis #{hyp.rank}</span>
-                          <div className="confidence-indicator">
-                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-secondary)' }}>{Math.round(hyp.confidence * 100)}%</span>
-                            <div className="confidence-bar-bg">
-                              <div className="confidence-bar-fill" style={{ width: `${hyp.confidence * 100}%` }}></div>
+                    {state.hypotheses && state.hypotheses.length > 0 ? (
+                      state.hypotheses.map((hyp, idx) => (
+                        <div key={idx} className="hypothesis-card">
+                          <div className="hyp-header">
+                            <span className="hyp-title">Hypothesis #{hyp.rank}</span>
+                            <div className="confidence-indicator">
+                              <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-secondary)' }}>{Math.round(hyp.confidence * 100)}%</span>
+                              <div className="confidence-bar-bg">
+                                <div className="confidence-bar-fill" style={{ width: `${hyp.confidence * 100}%` }}></div>
+                              </div>
                             </div>
                           </div>
+                          <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>{hyp.hypothesis}</p>
+                          <p className="hyp-rationale">{hyp.rationale}</p>
                         </div>
-                        <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>{hyp.hypothesis}</p>
-                        <p className="hyp-rationale">{hyp.rationale}</p>
+                      ))
+                    ) : ['active', 'investigating', 'triaged'].includes(selectedIncident.status) ? (
+                      <div className="glass-panel" style={{ padding: '20px', textAlign: 'center', background: 'rgba(255, 255, 255, 0.01)' }}>
+                        <RefreshCw className="animate-spin" size={16} style={{ color: 'var(--color-primary)', marginBottom: '8px', display: 'inline-block' }} />
+                        <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Lead SRE Root Cause Agent is isolating failures and generating hypotheses...</p>
                       </div>
-                    ))}
+                    ) : (
+                      <p style={{ color: 'var(--text-dark)', fontSize: '12px' }}>No hypotheses isolated.</p>
+                    )}
                   </div>
 
                   {state.recovery_plan && state.recovery_plan.action && (

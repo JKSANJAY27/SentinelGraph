@@ -1,0 +1,11 @@
+[
+  {
+    "incident_id": "INC_MOCK",
+    "service": "order-service",
+    "alertname": "MockAlertName",
+    "root_cause": "database connection pool saturation",
+    "evidence": "payment-service logs explicitly cite database connection pool limits reached, leading to subsequent upstream timeouts in order-service checkout routes.",
+    "mitigation": "restart database or increase database connection limits",
+    "key_learnings": "Always check for database connection pool saturation matching raw telemetry signals."
+  }
+]
