@@ -95,9 +95,8 @@ def run_incident_graph_async(incident_id: str, initial_state: dict):
         # Broadcast graph crash to any connected SSE listeners
         from .graph.nodes import incident_queues
         if incident_id in incident_queues:
-            for q in incident_queues[incident_id]:
+            for q, loop in incident_queues[incident_id]:
                 try:
-                    loop = q.get_loop()
                     loop.call_soon_threadsafe(q.put_nowait, {
                         "event": "step",
                         "message": f"Critical error: {str(exc)}",
@@ -263,9 +262,8 @@ def resume_incident_graph_async(incident_id: str, action: str):
             # Broadcast final status
             from .graph.nodes import incident_queues
             if incident_id in incident_queues:
-                for q in incident_queues[incident_id]:
+                for q, loop in incident_queues[incident_id]:
                     try:
-                        loop = q.get_loop()
                         loop.call_soon_threadsafe(q.put_nowait, {
                             "event": "step",
                             "message": msg,
@@ -287,9 +285,8 @@ def resume_incident_graph_async(incident_id: str, action: str):
             # Broadcast reject
             from .graph.nodes import incident_queues
             if incident_id in incident_queues:
-                for q in incident_queues[incident_id]:
+                for q, loop in incident_queues[incident_id]:
                     try:
-                        loop = q.get_loop()
                         loop.call_soon_threadsafe(q.put_nowait, {
                             "event": "step",
                             "message": msg,

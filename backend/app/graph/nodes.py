@@ -12,20 +12,23 @@ from ..memory.memory_store import save_memory, retrieve_relevant_memories
 llm = get_llm()
 
 # Global registry of real-time SSE queues for streaming agent updates to the UI
-# incident_id -> list of asyncio.Queue
-incident_queues: Dict[str, List[asyncio.Queue]] = {}
+# incident_id -> list of (asyncio.Queue, asyncio.AbstractEventLoop)
+incident_queues: Dict[str, List[tuple]] = {}
 
 def register_queue(incident_id: str, queue: asyncio.Queue):
     if incident_id not in incident_queues:
         incident_queues[incident_id] = []
-    incident_queues[incident_id].append(queue)
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        import asyncio
+        loop = asyncio.get_event_loop()
+    incident_queues[incident_id].append((queue, loop))
 
 def unregister_queue(incident_id: str, queue: asyncio.Queue):
     if incident_id in incident_queues:
-        try:
-            incident_queues[incident_id].remove(queue)
-        except ValueError:
-            pass
+        incident_queues[incident_id] = [item for item in incident_queues[incident_id] if item[0] is not queue]
 
 def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Route tool calls through the standardized MCP layer in-process."""
@@ -75,9 +78,8 @@ def log_step(state: IncidentState, msg: str) -> None:
     
     incident_id = state.get("incident_id")
     if incident_id and incident_id in incident_queues:
-        for q in incident_queues[incident_id]:
+        for q, loop in incident_queues[incident_id]:
             try:
-                loop = q.get_loop()
                 loop.call_soon_threadsafe(q.put_nowait, {
                     "event": "step",
                     "message": msg,
