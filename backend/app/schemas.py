@@ -40,3 +40,8 @@ class IncidentResponse(IncidentBase):
 
     class Config:
         from_attributes = True
+
+class ApprovalRequest(BaseModel):
+    action: str  # "approve" or "reject"
+    comments: Optional[str] = None
+

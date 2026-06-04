@@ -18,7 +18,7 @@ from typing import List
 
 from .database import Base, engine, get_db
 from .models import Incident
-from .schemas import AlertmanagerWebhook, IncidentResponse
+from .schemas import AlertmanagerWebhook, IncidentResponse, ApprovalRequest
 from .graph.workflow import create_incident_workflow
 from .graph.nodes import register_queue, unregister_queue
 
@@ -60,7 +60,8 @@ def run_incident_graph_async(incident_id: str, initial_state: dict):
                 print(f"[WARN] Failed to load Langfuse CallbackHandler: {str(langfuse_exc)}")
                 
         # Run graph
-        final_state = incident_graph.invoke(initial_state, config={"callbacks": callbacks})
+        config = {"configurable": {"thread_id": incident_id}, "callbacks": callbacks}
+        final_state = incident_graph.invoke(initial_state, config=config)
         
         # Update SQLite DB entry
         incident = db.query(Incident).filter(Incident.id == incident_id).first()
@@ -196,3 +197,109 @@ async def stream_incident(incident_id: str):
             unregister_queue(incident_id, queue)
             
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+def resume_incident_graph_async(incident_id: str, action: str):
+    """Resumes the LangGraph workflow from the paused interrupt checkpoint or cancels it."""
+    db = None
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+        if not incident:
+            return
+        
+        state = incident.state_json or {}
+        
+        callbacks = []
+        if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+            try:
+                from langfuse.langchain import CallbackHandler
+                langfuse_handler = CallbackHandler(
+                    public_key=os.getenv("LANGFUSE_PUBLIC_KEY")
+                )
+                callbacks.append(langfuse_handler)
+            except Exception as exc:
+                print(f"[WARN] Failed to load Langfuse CallbackHandler: {str(exc)}")
+        
+        config = {"configurable": {"thread_id": incident_id}, "callbacks": callbacks}
+        
+        if action == "approve":
+            # Add resume entry in execution history
+            msg = "Human Operator: Approved mitigation plan. Resuming execution."
+            incident_graph.update_state(config, {
+                "approval_status": "approved",
+                "execution_history": state.get("execution_history", []) + [msg]
+            })
+            
+            # Resume LangGraph by calling invoke with None input
+            final_state = incident_graph.invoke(None, config=config)
+            
+            incident.status = final_state.get("status", "recovered")
+            incident.state_json = final_state
+            db.commit()
+            
+            # Broadcast final status
+            from .graph.nodes import incident_queues
+            if incident_id in incident_queues:
+                for q in incident_queues[incident_id]:
+                    try:
+                        loop = q.get_loop()
+                        loop.call_soon_threadsafe(q.put_nowait, {
+                            "event": "step",
+                            "message": msg,
+                            "state": final_state
+                        })
+                    except Exception as q_exc:
+                        print(f"[WARN] Failed to broadcast resume: {str(q_exc)}")
+        else:
+            # Reject
+            msg = "Human Operator: Rejected mitigation plan. Aborting execution."
+            state["status"] = "rejected"
+            state["approval_status"] = "rejected"
+            state["execution_history"] = state.get("execution_history", []) + [msg]
+            
+            incident.status = "rejected"
+            incident.state_json = state
+            db.commit()
+            
+            # Broadcast reject
+            from .graph.nodes import incident_queues
+            if incident_id in incident_queues:
+                for q in incident_queues[incident_id]:
+                    try:
+                        loop = q.get_loop()
+                        loop.call_soon_threadsafe(q.put_nowait, {
+                            "event": "step",
+                            "message": msg,
+                            "state": state
+                        })
+                    except Exception as q_exc:
+                        print(f"[WARN] Failed to broadcast reject: {str(q_exc)}")
+    except Exception as exc:
+        print(f"[ERROR] resume_incident_graph_async failed: {str(exc)}")
+    finally:
+        db.close()
+
+@app.post("/api/v1/incidents/{incident_id}/action", response_model=IncidentResponse)
+def handle_incident_action(
+    incident_id: str,
+    payload: ApprovalRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+        
+    if incident.status != "recovery_pending":
+        raise HTTPException(status_code=400, detail="Action can only be performed when status is recovery_pending")
+        
+    if payload.action not in ["approve", "reject"]:
+        raise HTTPException(status_code=400, detail="Action must be either 'approve' or 'reject'")
+        
+    # Queue up background resume / reject thread runner
+    background_tasks.add_task(resume_incident_graph_async, incident_id, payload.action)
+    
+    # Return immediately to front-end to avoid blocking API
+    return incident
+

@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 from .state import IncidentState
 from .nodes import (
     supervisor_node,
@@ -56,5 +57,10 @@ def create_incident_workflow():
     workflow.add_edge("postmortem_writer", "memory_curator")
     workflow.add_edge("memory_curator", END)
     
-    # Compile graph
-    return workflow.compile()
+    # Compile graph with MemorySaver checkpointer
+    checkpointer = MemorySaver()
+    return workflow.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["postmortem_writer"]
+    )
+

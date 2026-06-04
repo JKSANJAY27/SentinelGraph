@@ -86,7 +86,17 @@ def run_evaluation():
         # Run the workflow
         start_time = time.time()
         try:
-            final_state = workflow.invoke(initial_state, config={"callbacks": callbacks})
+            config = {"configurable": {"thread_id": scenario["id"]}, "callbacks": callbacks}
+            final_state = workflow.invoke(initial_state, config=config)
+            
+            # If interrupted before postmortem_writer, resume with approval
+            if final_state.get("status") == "recovery_pending":
+                workflow.update_state(config, {
+                    "approval_status": "approved",
+                    "execution_history": final_state.get("execution_history", []) + ["Auto-eval: Approved mitigation plan."]
+                })
+                final_state = workflow.invoke(None, config=config)
+                
             latency = time.time() - start_time
             total_latency += latency
             successful_runs += 1

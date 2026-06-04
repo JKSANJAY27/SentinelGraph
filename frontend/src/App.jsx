@@ -14,7 +14,8 @@ import {
   FileText,
   UserCheck,
   RefreshCw,
-  Zap
+  Zap,
+  XCircle
 } from 'lucide-react'
 import './App.css'
 
@@ -191,6 +192,26 @@ function App() {
       console.error("Failed to inject chaos:", err)
     } finally {
       setChaosLoading(null)
+    }
+  }
+
+  // Handle mitigation approval or rejection
+  const handleApproval = async (action) => {
+    if (!selectedIncident) return
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/v1/incidents/${selectedIncident.id}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      })
+      if (response.ok) {
+        const updated = await response.json()
+        setSelectedIncident(updated)
+        // refresh list to show updated status immediately
+        setIncidents(prevList => prevList.map(inc => inc.id === selectedIncident.id ? updated : inc))
+      }
+    } catch (err) {
+      console.error("Failed to submit approval action:", err)
     }
   }
 
@@ -645,11 +666,38 @@ function App() {
                         Client Impact: <strong>{state.recovery_plan.impact}</strong>
                       </p>
                       
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => alert("Mitigation Approved & Fired!")}>
-                          <UserCheck size={14} /> Approve Action
-                        </button>
-                      </div>
+                      {selectedIncident.status === 'recovery_pending' && (
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            className="btn btn-primary" 
+                            style={{ flex: 1, backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: '#10b981', color: '#10b981' }} 
+                            onClick={() => handleApproval('approve')}
+                          >
+                            <UserCheck size={14} style={{ marginRight: '4px' }} /> Approve
+                          </button>
+                          <button 
+                            className="btn" 
+                            style={{ flex: 1, backgroundColor: 'rgba(239, 68, 68, 0.2)', borderColor: '#ef4444', color: '#ef4444', border: '1px solid #ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', cursor: 'pointer', borderRadius: '4px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', transition: 'all 0.2s' }} 
+                            onClick={() => handleApproval('reject')}
+                          >
+                            <XCircle size={14} /> Reject
+                          </button>
+                        </div>
+                      )}
+
+                      {(selectedIncident.status === 'recovered' || selectedIncident.status === 'postmortem_written') && (
+                        <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                          <CheckCircle size={14} />
+                          <span>Mitigation Action Executed Successfully</span>
+                        </div>
+                      )}
+
+                      {selectedIncident.status === 'rejected' && (
+                        <div style={{ padding: '10px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                          <XCircle size={14} />
+                          <span>Mitigation Action Rejected</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
