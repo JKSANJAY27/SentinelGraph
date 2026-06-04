@@ -42,7 +42,10 @@ def seed_default_settings():
             "slack_webhook_url": "",
             "langfuse_public_key": os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-0f43a27c-5b4d-4f10-9446-6eee8060216c"),
             "langfuse_secret_key": os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-f656a0df-ba2b-4c14-b722-f582b67516f3"),
-            "langfuse_base_url": os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+            "langfuse_base_url": os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
+            "logs_file_path": "logs/{service}.log",
+            "remediation_webhook_url": "",
+            "remediation_command": "echo 'Restarting service {service}'"
         }
         for k, v in defaults.items():
             existing = db.query(SystemSetting).filter(SystemSetting.key == k).first()
@@ -148,15 +151,65 @@ def mcp_endpoint(payload: dict):
     return mcp_server.dispatch(payload)
 
 @app.post("/api/v1/alerts", response_model=IncidentResponse)
-def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    if not webhook_data.alerts:
-        raise HTTPException(status_code=400, detail="No alerts found in webhook payload")
-        
-    alert = webhook_data.alerts[0]
-    alertname = alert.labels.get("alertname", "UnknownAlert")
-    service = alert.labels.get("service", alert.labels.get("job", "unknown-service"))
-    severity = alert.labels.get("severity", "info")
+def receive_alert(webhook_data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    alertname = "UnknownAlert"
+    service = "unknown-service"
+    severity = "critical"
     
+    # 1. Detect Sentry Payload
+    if "project_name" in webhook_data or "project" in webhook_data or "event" in webhook_data:
+        service = webhook_data.get("project_name", webhook_data.get("project", "unknown-service"))
+        severity = webhook_data.get("level", "error")
+        alertname = webhook_data.get("message", webhook_data.get("title", "SentryExceptionAlert"))
+        if "event" in webhook_data and isinstance(webhook_data["event"], dict):
+            event = webhook_data["event"]
+            service = event.get("project", service)
+            alertname = event.get("title", alertname)
+            severity = event.get("level", severity)
+            
+    # 2. Detect Grafana Payload
+    elif "ruleName" in webhook_data or "evalMatches" in webhook_data:
+        alertname = webhook_data.get("ruleName", "GrafanaAlert")
+        severity = "warning" if webhook_data.get("state") == "pending" else "critical"
+        tags = webhook_data.get("tags", {})
+        service = tags.get("service", tags.get("job", "unknown-service"))
+        if service == "unknown-service" and webhook_data.get("evalMatches"):
+            matches = webhook_data["evalMatches"]
+            if matches and isinstance(matches, list):
+                service = matches[0].get("metric", "unknown-service")
+                
+    # 3. Alertmanager Format (standard or fallback)
+    else:
+        alerts = webhook_data.get("alerts", [])
+        if alerts and isinstance(alerts, list):
+            alert = alerts[0]
+            labels = alert.get("labels", {})
+            alertname = labels.get("alertname", "UnknownAlert")
+            service = labels.get("service", labels.get("job", "unknown-service"))
+            severity = labels.get("severity", "critical")
+        else:
+            alertname = webhook_data.get("alertname", "GenericWebhookAlert")
+            service = webhook_data.get("service", "unknown-service")
+            severity = webhook_data.get("severity", "info")
+
+    # Clean and normalize service name to match user-service, order-service, payment-service catalog
+    service_lower = service.lower()
+    if "payment" in service_lower:
+        service = "payment-service"
+    elif "order" in service_lower:
+        service = "order-service"
+    elif "user" in service_lower:
+        service = "user-service"
+    else:
+        service = service.replace("_", "-")
+        if not service.endswith("-service"):
+            service = f"{service}-service"
+
+    # Normalize severity to lowercase
+    severity = severity.lower()
+    if severity not in ["info", "warning", "critical"]:
+        severity = "critical" if severity in ["error", "fatal"] else "warning"
+
     incident_id = f"inc_{int(time.time())}"
     
     # 1. Initialize DB incident
@@ -166,7 +219,7 @@ def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: Backgroun
         service=service,
         severity=severity,
         status="active",
-        alert_payload=webhook_data.model_dump(),
+        alert_payload=webhook_data,
         state_json={
             "incident_id": incident_id,
             "status": "active",
@@ -180,7 +233,7 @@ def receive_alert(webhook_data: AlertmanagerWebhook, background_tasks: Backgroun
     # 2. Setup initial state
     initial_state = {
         "incident_id": incident_id,
-        "alert_payload": webhook_data.model_dump(),
+        "alert_payload": webhook_data,
         "service": service,
         "severity": severity,
         "status": "active",
@@ -213,7 +266,8 @@ def get_settings(db: Session = Depends(get_db)):
     required_keys = [
         "prometheus_url", "logs_mode", "kubernetes_namespace", "restart_mode",
         "github_repo", "github_branch", "github_token", "slack_webhook_url",
-        "langfuse_public_key", "langfuse_secret_key", "langfuse_base_url"
+        "langfuse_public_key", "langfuse_secret_key", "langfuse_base_url",
+        "logs_file_path", "remediation_webhook_url", "remediation_command"
     ]
     for key in required_keys:
         if key not in s_dict:
@@ -279,6 +333,55 @@ def test_setting_connection(payload: dict):
             return {"status": "error", "message": f"GitHub returned status {res.status_code} (repo may be private or invalid)."}
         except Exception as e:
             return {"status": "error", "message": f"Failed to connect to GitHub: {str(e)}"}
+            
+    elif target == "webhook":
+        import httpx
+        try:
+            test_payload = {
+                "service": "test-service",
+                "action": "test",
+                "timestamp": time.time(),
+                "trigger": "SentinelGraph Connection Test"
+            }
+            res = httpx.post(value, json=test_payload, timeout=3.0)
+            if res.status_code in [200, 201, 202, 204]:
+                return {"status": "success", "message": f"Successfully sent webhook payload. Status code: {res.status_code}."}
+            return {"status": "error", "message": f"Webhook returned status code {res.status_code}."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to post to webhook: {str(e)}"}
+            
+    elif target == "command":
+        import subprocess
+        # Test command by substituting {service} with 'test-service'
+        cmd = value.replace("{service}", "test-service")
+        try:
+            res = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=3.0
+            )
+            if res.returncode == 0:
+                return {"status": "success", "message": f"Successfully executed command. Output: {res.stdout.strip()[:100]}"}
+            return {"status": "error", "message": f"Command returned exit code {res.returncode}. Stderr: {res.stderr.strip()[:100]}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to execute command: {str(e)}"}
+            
+    elif target == "local_file":
+        try:
+            import os
+            path = value.replace("{service}", "test-service")
+            dir_name = os.path.dirname(path) or "."
+            if os.path.exists(path):
+                return {"status": "success", "message": f"Log file exists and is readable at '{path}'."}
+            elif os.path.exists(dir_name):
+                return {"status": "success", "message": f"Path '{path}' does not exist yet, but parent directory '{dir_name}' is accessible."}
+            else:
+                return {"status": "error", "message": f"Parent directory '{dir_name}' does not exist."}
+        except Exception as e:
+            return {"status": "error", "message": f"Invalid path pattern: {str(e)}"}
             
     return {"status": "error", "message": "Unknown test target."}
 

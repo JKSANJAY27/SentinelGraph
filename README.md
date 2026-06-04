@@ -134,9 +134,17 @@ SentinelGraph features a real-time **System Settings & Integrations** panel acce
 2. **Container Logging & Action Modes**:
    - **Docker mode**: Queries local container streams (`docker logs`) and triggers recovery restarts (`docker restart`).
    - **Kubernetes mode**: Connects to the active cluster namespace, queries logs directly from pod objects (`CoreV1Api`), and executes rollouts (`kubectl rollout restart deployment/...` via `AppsV1Api`).
-3. **GitHub Release/Commit Registry**: Set your `github_repo` (e.g. `owner/repo`) and target branch. The **Deploy Detective** will automatically query the actual GitHub Commits API to trace recent releases.
-4. **Slack Team Webhook Alerts**: Connect a Slack incoming webhook. SentinelGraph will post notifications for key SRE milestones (Incident detected, mitigation proposed/awaiting approval, and incident resolved).
-5. **Langfuse Tracing Configuration**: Dynamically update your public/secret credentials to enable LLM observability traces.
+   - **Local File Logs mode**: Read log files directly from host disk path templates (e.g. `logs/{service}.log`).
+3. **Remediation Action Modes**:
+   - **HTTP Webhook Remediator**: Calls custom webhooks (e.g. Jenkins pipelines, Ansible tower, AWS API gateways) on incident recovery approval.
+   - **Shell Command Executor**: Runs host command line templates (e.g. `systemctl restart {service}`) inside a local shell subprocess.
+4. **Platform-Agnostic Webhooks**: The `/api/v1/alerts` receiver auto-detects and normalizes alert payloads from:
+   - **Prometheus Alertmanager**: Standard alerts.
+   - **Grafana Alert Webhooks**: Custom metrics tags and states.
+   - **Sentry Issue Webhooks**: Application exceptions and error logs.
+5. **GitHub Release/Commit Registry**: Set your `github_repo` (e.g. `owner/repo`) and target branch. The **Deploy Detective** will automatically query the actual GitHub Commits API to trace recent releases.
+6. **Slack Team Webhook Alerts**: Connect a Slack incoming webhook. SentinelGraph will post notifications for key SRE milestones (Incident detected, mitigation proposed/awaiting approval, and incident resolved).
+7. **Langfuse Tracing Configuration**: Dynamically update your public/secret credentials to enable LLM observability traces.
 
 ---
 

@@ -130,6 +130,7 @@ class MCPServer:
 
         elif name == "restart_container":
             import subprocess
+            import time
             
             restart_mode = get_setting_value("restart_mode", "docker").lower()
             if restart_mode == "kubernetes":
@@ -163,7 +164,48 @@ class MCPServer:
                 except Exception as exc:
                     print(f"[RESTART CONTAINER] Failed to patch Kubernetes deployment: {str(exc)}")
             
-            # Fallback to docker restart
+            elif restart_mode == "webhook":
+                webhook_url = get_setting_value("remediation_webhook_url", "")
+                if webhook_url:
+                    try:
+                        import httpx
+                        payload = {
+                            "service": service,
+                            "action": "restart",
+                            "timestamp": time.time(),
+                            "trigger": "SentinelGraph Remediation Agent"
+                        }
+                        res = httpx.post(webhook_url, json=payload, timeout=5.0)
+                        msg = f"Triggered remediation webhook at '{webhook_url}'. Status code: {res.status_code}. Response: {res.text[:100]}"
+                        return {"content": [{"type": "text", "text": msg}], "status": "success"}
+                    except Exception as exc:
+                        msg = f"Failed to trigger remediation webhook: {str(exc)}"
+                        return {"content": [{"type": "text", "text": msg}], "status": "error"}
+                else:
+                    return {"content": [{"type": "text", "text": "Remediation webhook URL is not configured."}], "status": "error"}
+            
+            elif restart_mode == "command":
+                cmd_template = get_setting_value("remediation_command", "")
+                if cmd_template:
+                    cmd = cmd_template.replace("{service}", service)
+                    try:
+                        res = subprocess.run(
+                            cmd,
+                            shell=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            timeout=5.0
+                        )
+                        msg = f"Executed remediation command: `{cmd}`. Return code: {res.returncode}. Stdout: {res.stdout.strip()[:100]}. Stderr: {res.stderr.strip()[:100]}"
+                        return {"content": [{"type": "text", "text": msg}], "status": "success" if res.returncode == 0 else "error"}
+                    except Exception as exc:
+                        msg = f"Failed to execute remediation command `{cmd}`: {str(exc)}"
+                        return {"content": [{"type": "text", "text": msg}], "status": "error"}
+                else:
+                    return {"content": [{"type": "text", "text": "Remediation command template is not configured."}], "status": "error"}
+            
+            # Default fallback: Docker restart container
             try:
                 result = subprocess.run(
                     ["docker", "restart", service],

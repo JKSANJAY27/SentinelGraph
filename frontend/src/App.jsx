@@ -42,7 +42,10 @@ function App() {
     slack_webhook_url: '',
     langfuse_public_key: '',
     langfuse_secret_key: '',
-    langfuse_base_url: ''
+    langfuse_base_url: '',
+    logs_file_path: 'logs/{service}.log',
+    remediation_webhook_url: '',
+    remediation_command: "echo 'Restarting service {service}'"
   })
   const [testingConnection, setTestingConnection] = useState(null)
   const [testResult, setTestResult] = useState({ status: '', message: '' })
@@ -1103,7 +1106,7 @@ function App() {
 
               {/* Logs & Remediation Environment Configuration */}
               <div className="settings-section">
-                <h3>🖥️ Container Logging & Remediation</h3>
+                <h3>🖥️ Logging & Remediation Configuration</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div className="input-group">
                     <label htmlFor="logs_mode">Telemetry Logs Mode</label>
@@ -1115,6 +1118,7 @@ function App() {
                       <option value="mock">Simulated SRE Logs (Default)</option>
                       <option value="docker">Local Docker Container Logs</option>
                       <option value="kubernetes">Kubernetes Pod Stream Logs</option>
+                      <option value="local_file">Local Log File (on Host VM)</option>
                     </select>
                   </div>
 
@@ -1127,21 +1131,93 @@ function App() {
                     >
                       <option value="docker">Docker Restart Container</option>
                       <option value="kubernetes">Kubernetes Deployment Rollout Restart</option>
+                      <option value="webhook">HTTP Webhook Remediator</option>
+                      <option value="command">Shell Command Executor</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="input-group" style={{ marginTop: '8px' }}>
-                  <label htmlFor="kubernetes_namespace">Kubernetes Target Namespace</label>
-                  <input 
-                    type="text" 
-                    id="kubernetes_namespace" 
-                    value={settingsForm.kubernetes_namespace} 
-                    onChange={(e) => setSettingsForm({ ...settingsForm, kubernetes_namespace: e.target.value })}
-                    placeholder="e.g. default, production"
-                    disabled={settingsForm.logs_mode !== 'kubernetes' && settingsForm.restart_mode !== 'kubernetes'}
-                  />
-                </div>
+                {settingsForm.logs_mode === 'kubernetes' || settingsForm.restart_mode === 'kubernetes' ? (
+                  <div className="input-group" style={{ marginTop: '8px' }}>
+                    <label htmlFor="kubernetes_namespace">Kubernetes Target Namespace</label>
+                    <input 
+                      type="text" 
+                      id="kubernetes_namespace" 
+                      value={settingsForm.kubernetes_namespace} 
+                      onChange={(e) => setSettingsForm({ ...settingsForm, kubernetes_namespace: e.target.value })}
+                      placeholder="e.g. default, production"
+                    />
+                  </div>
+                ) : null}
+
+                {settingsForm.logs_mode === 'local_file' && (
+                  <div className="input-group" style={{ marginTop: '8px' }}>
+                    <label htmlFor="logs_file_path">Local Log File Path Template</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        type="text" 
+                        id="logs_file_path" 
+                        value={settingsForm.logs_file_path} 
+                        onChange={(e) => setSettingsForm({ ...settingsForm, logs_file_path: e.target.value })}
+                        placeholder="e.g. logs/{service}.log"
+                      />
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                        onClick={() => testConnection("local_file", settingsForm.logs_file_path)}
+                        disabled={testingConnection !== null}
+                      >
+                        {testingConnection === 'local_file' ? 'Testing...' : 'Test Path'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {settingsForm.restart_mode === 'webhook' && (
+                  <div className="input-group" style={{ marginTop: '8px' }}>
+                    <label htmlFor="remediation_webhook_url">Remediation Webhook URL</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        type="text" 
+                        id="remediation_webhook_url" 
+                        value={settingsForm.remediation_webhook_url} 
+                        onChange={(e) => setSettingsForm({ ...settingsForm, remediation_webhook_url: e.target.value })}
+                        placeholder="e.g. http://localhost:8000/remediate"
+                      />
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                        onClick={() => testConnection("webhook", settingsForm.remediation_webhook_url)}
+                        disabled={testingConnection !== null}
+                      >
+                        {testingConnection === 'webhook' ? 'Testing...' : 'Test Webhook'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {settingsForm.restart_mode === 'command' && (
+                  <div className="input-group" style={{ marginTop: '8px' }}>
+                    <label htmlFor="remediation_command">Remediation Command Template</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        type="text" 
+                        id="remediation_command" 
+                        value={settingsForm.remediation_command} 
+                        onChange={(e) => setSettingsForm({ ...settingsForm, remediation_command: e.target.value })}
+                        placeholder="e.g. systemctl restart {service}"
+                      />
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ fontSize: '11px', padding: '0 12px', whiteSpace: 'nowrap' }}
+                        onClick={() => testConnection("command", settingsForm.remediation_command)}
+                        disabled={testingConnection !== null}
+                      >
+                        {testingConnection === 'command' ? 'Testing...' : 'Test Command'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* GitHub Repository integration */}

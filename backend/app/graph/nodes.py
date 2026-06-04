@@ -177,7 +177,7 @@ def log_step(state: IncidentState, msg: str) -> None:
             )
 
 def fetch_container_logs(container_name: str) -> List[str]:
-    """Tries to query live logs from Docker or Kubernetes based on logs_mode database configuration."""
+    """Tries to query live logs from Docker, Kubernetes, or local files based on logs_mode database configuration."""
     logs_mode = get_setting_value("logs_mode", "docker").lower()
     
     if logs_mode == "kubernetes":
@@ -214,6 +214,26 @@ def fetch_container_logs(container_name: str) -> List[str]:
                 return [line.strip() for line in logs.split("\n") if line.strip()]
         except Exception as exc:
             print(f"[LOG INVESTIGATOR] Failed to query Kubernetes logs for '{container_name}': {str(exc)}")
+            
+    elif logs_mode == "local_file":
+        try:
+            file_template = get_setting_value("logs_file_path", "logs/{service}.log")
+            file_path = file_template.replace("{service}", container_name)
+            
+            if not os.path.isabs(file_path):
+                backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                test_path = os.path.join(backend_dir, file_path)
+                if os.path.exists(test_path):
+                    file_path = test_path
+                    
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    return [line.strip() for line in lines[-40:] if line.strip()]
+            else:
+                print(f"[LOG INVESTIGATOR] Local log file not found at: {file_path}")
+        except Exception as exc:
+            print(f"[LOG INVESTIGATOR] Failed to query local log file: {str(exc)}")
             
     # Default/Fallback to docker logs mode
     try:

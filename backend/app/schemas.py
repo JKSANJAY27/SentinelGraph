@@ -57,4 +57,7 @@ class SettingsResponse(BaseModel):
     langfuse_public_key: str
     langfuse_secret_key: str
     langfuse_base_url: str
+    logs_file_path: str
+    remediation_webhook_url: str
+    remediation_command: str
 
