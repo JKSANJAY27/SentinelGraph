@@ -219,3 +219,42 @@ Overall SRE Score:    100.0%
 ======================================================================
 ```
 Detailed performance grids and logs are automatically compiled to `backend/app/benchmark/report.md`.
+
+---
+
+## ☁️ Free-Tier Cloud Deployment Guide
+
+SentinelGraph can be fully deployed in under 5 minutes using free tiers on Vercel (frontend) and Render (backend) with Supabase/Neon (PostgreSQL database):
+
+### 1. Database Setup (Supabase or Neon)
+To ensure settings and incidents persist across backend container redeployments, provision a free PostgreSQL database:
+1. Create a free account on [Neon.tech](https://neon.tech/) or [Supabase.com](https://supabase.com/).
+2. Create a database instance and copy the **PostgreSQL Connection String**.
+
+### 2. Backend Deployment (Render)
+1. Sign up for a free account at [Render.com](https://render.com/).
+2. Click **New +** and select **Web Service**.
+3. Link your GitHub repository.
+4. Configure the Web Service settings:
+   - **Name**: `sentinelgraph-backend`
+   - **Root Directory**: `backend`
+   - **Runtime**: `Python`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+5. In the **Environment Variables** tab, add:
+   - `DATABASE_URL`: `postgresql://user:pass@host/dbname` (Paste your PostgreSQL string)
+   - `LLM_PROVIDER`: `fallback` (or `gemini` if you have `GEMINI_API_KEY`)
+   - `GEMINI_API_KEY`: *(Optional)* Your Gemini API Key
+   - `PYTHON_VERSION`: `3.12`
+6. Deploy! Render will compile and start the backend service on a URL like `https://sentinelgraph-backend.onrender.com`.
+
+### 3. Frontend Deployment (Vercel)
+1. Sign up for a free account at [Vercel.com](https://vercel.com/).
+2. Click **Add New** -> **Project** and import your GitHub repository.
+3. Configure the Project settings:
+   - **Root Directory**: Select `frontend`.
+   - **Framework Preset**: Vercel will automatically detect `Vite`.
+4. In the **Environment Variables** tab, add:
+   - `VITE_BACKEND_URL`: `https://your-render-app-url.onrender.com` (Your Render API URL, **no** trailing slash)
+5. Click **Deploy**. Vercel will build and host your glassmorphic SRE dashboard on a free `.vercel.app` domain.
+
