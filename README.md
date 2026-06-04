@@ -9,7 +9,9 @@ Built for modern DevOps and SRE teams, it runs parallel specialized investigator
 ## 🚀 Key Features
 
 *   **Multi-Agent Collaborative Reasoning**: Powered by LangGraph state machines, running parallel SRE specialists (Logs Investigator, Metrics Analyst, Deploy Detective, Runbook Docs Assistant, Dependency Detective) that fan-in to a Root Cause Agent.
-*   **Aesthetic SRE Dashboard**: A premium glassmorphic Vite+React user interface featuring real-time Server-Sent Events (SSE) log streams, active incident timelines, and interactive SVG network dependency graphs.
+*   **Standardized MCP Server Tool Layer**: Houses server utilities (log queries, Prometheus metric gathering, static runbook lookups, container restarting) inside a standard-compliant HTTP/JSON-RPC 2.0 Model Context Protocol (MCP) server layer, ensuring isolated backend capability execution.
+*   **Incident Playback Replay Mode**: Record step-by-step state checkpoint snapshots during incident investigation, allowing operator playback/replay. Control scrubber timelines with auto-play loops, step forward/backward buttons, and live timelines.
+*   **Aesthetic SRE Dashboard**: A premium glassmorphic Vite+React user interface featuring real-time Server-Sent Events (SSE) log streams, active incident timelines, dynamic metrics wave graphs, and interactive SVG network dependency graphs.
 *   **Offline Evaluation Harness**: Includes an automated benchmarking suite that runs the reasoning graph against 10 deterministic incident scenarios, grading agents on Triage, RCA Diagnosis, and Mitigation.
 *   **Production Telemetry**: Out-of-the-box observability via Langfuse callback handlers, tracing nested graph runs, agent latency, prompt templates, and token costs.
 *   **Long-Term Memory Database**: SQLite-based semantic memory that stores lessons-learned from previous incidents to inform future recovery planning.
