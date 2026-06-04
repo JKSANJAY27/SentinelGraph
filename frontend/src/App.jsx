@@ -863,7 +863,7 @@ function App() {
                       <div>
                         <h3 style={{ fontSize: '14px', marginBottom: '14px' }}>Automated Postmortem Summary Report</h3>
                         {state.postmortem ? (
-                          <div className="postmortem-markdown glass-panel" style={{ padding: '20px', background: 'rgba(9, 13, 22, 0.4)', color: 'var(--text-main)', lineHeight: '1.6', overflowY: 'auto', maxHeight: '450px' }}>
+                          <div className="postmortem-markdown glass-panel" style={{ padding: '20px', background: 'rgba(9, 13, 22, 0.4)', color: 'var(--text-main)', lineHeight: '1.6', overflowY: 'auto', maxHeight: '550px' }}>
                             <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', fontSize: '13px' }}>
                               {state.postmortem}
                             </div>

@@ -212,7 +212,7 @@
 .incident-dashboard-layout {
   flex: 1;
   display: grid;
-  grid-template-rows: 240px 1fr;
+  grid-template-rows: 120px 1fr;
   overflow: hidden;
   gap: 16px;
   padding: 16px;
@@ -230,7 +230,7 @@
   font-family: var(--font-display);
   font-size: 14px;
   font-weight: 700;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   color: var(--text-muted);
 }
 
@@ -365,7 +365,7 @@
   padding: 16px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-glass);
-  max-height: 380px;
+  max-height: 550px;
   overflow-y: auto;
 }
 
