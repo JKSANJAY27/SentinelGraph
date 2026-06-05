@@ -220,34 +220,83 @@ On June 4th, 2026, an automated alert was triggered due to {data['hypothesis']}.
     def _llm_type(self) -> str:
         return "fallback-sre-model"
 
+class RobustFallbackChatModel(BaseChatModel):
+    models: list
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        last_error = None
+        for i, model in enumerate(self.models):
+            if model is None:
+                continue
+            try:
+                callbacks = None
+                if run_manager:
+                    try:
+                        callbacks = run_manager.get_child()
+                    except Exception:
+                        pass
+                llm_result = model.generate([messages], stop=stop, callbacks=callbacks, **kwargs)
+                return ChatResult(generations=llm_result.generations[0])
+            except Exception as exc:
+                last_error = exc
+                model_name = getattr(model, "model", getattr(model, "model_name", str(model)))
+                print(f"[FALLBACK-CHAIN] LLM {i} ({model_name}) failed: {str(exc)}. Falling back to next...")
+        
+        if last_error:
+            raise last_error
+        raise Exception("All configured models failed in RobustFallbackChatModel.")
+
+    def _llm_type(self) -> str:
+        return "robust-fallback-chat-model"
+
 def get_llm() -> BaseChatModel:
     """LLM Model Factory supporting Gemini Generative AI, local Ollama, and fallbacks."""
     provider = os.getenv("LLM_PROVIDER", "fallback").lower()
     
-    if provider == "gemini":
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            print("[WARNING] GEMINI_API_KEY is not defined in env. Falling back to SRE stubs.")
-            return FallbackSREChatModel()
+    # 1. Build the list of models to try in order based on provider
+    models_to_try = []
+    
+    # Primary Gemini configuration
+    gemini_model = None
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-            return ChatGoogleGenerativeAI(model=model_name, google_api_key=gemini_key)
+            gemini_model = ChatGoogleGenerativeAI(model=model_name, google_api_key=gemini_key)
         except Exception as exc:
-            print(f"[ERROR] Failed to instantiate ChatGoogleGenerativeAI: {str(exc)}. Falling back.")
-            return FallbackSREChatModel()
-            
-    elif provider == "ollama":
-        if ChatOllama is None:
-            print("[ERROR] ChatOllama class could not be loaded from any import path. Falling back.")
-            return FallbackSREChatModel()
+            print(f"[ERROR] Failed to instantiate ChatGoogleGenerativeAI: {str(exc)}")
+
+    # Secondary Ollama configuration
+    ollama_model = None
+    if ChatOllama is not None:
         model_name = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         try:
-            return ChatOllama(model=model_name, base_url=base_url)
+            ollama_model = ChatOllama(model=model_name, base_url=base_url)
         except Exception as exc:
-            print(f"[ERROR] Failed to connect to Ollama server: {str(exc)}. Falling back.")
-            return FallbackSREChatModel()
-    
-    # Defaults to our custom fallback SRE model
-    return FallbackSREChatModel()
+            print(f"[ERROR] Failed to instantiate ChatOllama: {str(exc)}")
+
+    # Tertiary Fallback Stub model
+    stub_model = FallbackSREChatModel()
+
+    # Determine order based on provider
+    if provider == "gemini":
+        if gemini_model:
+            models_to_try.append(gemini_model)
+        if ollama_model:
+            models_to_try.append(ollama_model)
+        models_to_try.append(stub_model)
+        
+    elif provider == "ollama":
+        if ollama_model:
+            models_to_try.append(ollama_model)
+        models_to_try.append(stub_model)
+        
+    else:  # fallback
+        models_to_try.append(stub_model)
+        
+    return RobustFallbackChatModel(models=models_to_try)
